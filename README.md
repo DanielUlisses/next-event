@@ -211,8 +211,8 @@ Rules send a specific meeting somewhere else: `match` is a case-insensitive subs
 event title, the optional `calendar` restricts the rule to one calendar, and the first
 matching rule wins. In the example above, "Daily Sync" in the Work calendar opens in
 `teams-for-linux` while the other Work meetings open in Chrome profile 2. Teams join links
-(`https://teams.microsoft.com/l/meetup-join/…`) are passed to the launcher unchanged; only a
-single `teams-for-linux` instance is supported.
+(`https://teams.microsoft.com/l/meetup-join/…`) are passed to the launcher unchanged; for
+several Teams accounts see [Multiple Teams accounts](#multiple-teams-accounts).
 
 Rules can also match the meeting's video provider (`Meet`, `Zoom`, `Teams`, `Webex`,
 `GoToMeeting`, case-insensitive) with `provider`. This suits setups where Teams calls are just
@@ -243,6 +243,30 @@ video link) resolves: matching rule → calendar mapping → `browserCommand` �
 Invalid JSON is ignored. A rule or mapping that names an unknown launcher, or a launcher with
 an empty command, falls through to the next level and logs a warning naming the bad
 reference, so a click always opens something.
+
+### Multiple Teams accounts
+
+teams-for-linux supports separate accounts by running one instance per `--user-data-dir`; the
+single-instance lock is per data directory, so a join link handed to a launcher reaches the
+instance that owns that directory (or starts it if it is not running). Define one launcher per
+instance and route with rules:
+
+```sh
+omarchy bar set tobiasz-p.next-event launchers '{"teams":"teams-for-linux","teams-personal":"teams-for-linux --class=teams-personal --user-data-dir=/home/you/.config/teams-personal"}'
+omarchy bar set tobiasz-p.next-event launcherRules '[{"provider":"teams","match":"Book Club","launcher":"teams-personal"},{"provider":"teams","calendar":"Personal","launcher":"teams-personal"},{"provider":"teams","launcher":"teams"}]'
+```
+
+Here the recurring "Book Club" call goes to the personal instance even when it lives in another
+calendar, every other Teams call in the Personal calendar does too, and all remaining Teams
+calls open in the default instance. Rules are checked in order and the first match wins, so put
+specific `match` rules first, then `calendar` + `provider` rules, and the broad `provider` rule
+last; a broad rule placed first would shadow everything below it.
+
+- Launcher commands run through `bash -lc`, so `$HOME` expands, but `~` does not expand after
+  an `=` (`--user-data-dir=~/x` stays literal). Use `$HOME/…` or an absolute path.
+- `--class` gives each instance its own window class, so Hyprland window rules and
+  `hyprctl clients` can tell the accounts apart. Use the same value the instance was started
+  with.
 
 ## Opening the panel from the keyboard
 

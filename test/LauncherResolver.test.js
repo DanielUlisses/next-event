@@ -321,4 +321,40 @@ describe("resolveLauncher", () => {
       assert.match(r.warnings[0], /ghost/)
     })
   })
+
+  describe("multiple Teams accounts", () => {
+    const PERSONAL_CMD =
+      "teams-for-linux --class=teams-personal --user-data-dir=/home/you/.config/teams-personal"
+    const cfg = config({
+      launchers: JSON.stringify({ teams: "teams-for-linux", "teams-personal": PERSONAL_CMD }),
+      calendarLaunchers: "",
+      launcherRules: JSON.stringify([
+        { provider: "teams", match: "Book Club", launcher: "teams-personal" },
+        { provider: "teams", calendar: "Personal", launcher: "teams-personal" },
+        { provider: "teams", launcher: "teams" }
+      ])
+    })
+    const resolve = event => Model.resolveLauncher(withMeet(event, TEAMS_URL), "join", cfg)
+
+    it("routes a Teams meeting in the Personal calendar to the personal instance", () => {
+      const r = resolve(ics("Standup", "Personal"))
+      assert.equal(r.launcherName, "teams-personal")
+      assert.equal(r.command, PERSONAL_CMD)
+    })
+
+    it("routes a Teams meeting in any other calendar to the default instance", () => {
+      const r = resolve(ics("Standup", "Work"))
+      assert.equal(r.launcherName, "teams")
+      assert.equal(r.command, "teams-for-linux")
+    })
+
+    it("lets a title-matched rule override the calendar within the same calendar", () => {
+      assert.equal(resolve(ics("Book Club", "Work")).launcherName, "teams-personal")
+    })
+
+    it("sends both recurring calls of one calendar to different instances", () => {
+      assert.equal(resolve(ics("Book Club", "Work")).launcherName, "teams-personal")
+      assert.equal(resolve(ics("Daily Sync", "Work")).launcherName, "teams")
+    })
+  })
 })
