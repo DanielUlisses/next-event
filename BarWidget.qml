@@ -304,7 +304,7 @@ BarWidget {
     if (root.sourceMode === Model.SOURCE_MODE_ICS && !root.icsLiveFetchSucceeded) return
     // Fresh clock: root.now only ticks every 30 s.
     var now = new Date()
-    var due = Model.dueReminders(root.rawEvents, now, root.notifyMinutesBefore, root.notified, {
+    var due = Model.dueReminders(Model.filterExcluded(root.rawEvents, root.excludeKeywords), now, root.notifyMinutesBefore, root.notified, {
       showOnlyWithVideoLink: root.showOnlyWithVideoLink
     })
     if (due.length === 0) return

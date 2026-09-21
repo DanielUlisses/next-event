@@ -9,7 +9,8 @@ const {
   reminderSummary,
   reminderBody,
   pruneNotified,
-  parseNotified
+  parseNotified,
+  filterExcluded
 } = require("../Model.js")
 
 const MIN = 60000
@@ -186,5 +187,24 @@ describe("reminderBody()", () => {
   })
   it("defaults to showing the calendar label", () => {
     assert.equal(reminderBody(e), "10:00–11:00 · Work")
+  })
+})
+
+describe("reminders with excludeKeywords", () => {
+  it("skips meetings hidden by excludeKeywords", () => {
+    const events = [
+      ev({ uid: "a", title: "Lunch break" }),
+      ev({ uid: "b", title: "Sprint Review" })
+    ]
+    const due = dueReminders(filterExcluded(events, "lunch"), at(5), 10, {})
+    assert.deepEqual(
+      due.map(e => e.uid),
+      ["b"]
+    )
+  })
+
+  it("keeps every meeting when excludeKeywords is empty", () => {
+    const events = [ev({ uid: "a", title: "Lunch break" }), ev({ uid: "b" })]
+    assert.equal(dueReminders(filterExcluded(events, ""), at(5), 10, {}).length, 2)
   })
 })

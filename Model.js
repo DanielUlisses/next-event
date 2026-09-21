@@ -2641,6 +2641,9 @@ function parseExcludeKeywords(value) {
 function matchesExcludeKeywords(title, keywords) {
   return ScheduleAggregator.matchesExcludeKeywords(title, keywords)
 }
+function filterExcluded(events, excludeKeywords) {
+  return ScheduleAggregator.filterExcluded(events || [], excludeKeywords)
+}
 
 function buildUpcoming(events, now, options) {
   return ScheduleAggregator.buildUpcoming(events, now, options)
@@ -3009,6 +3012,7 @@ if (typeof module !== "undefined" && module.exports) {
     toBoolean: toBoolean,
     parseExcludeKeywords: parseExcludeKeywords,
     matchesExcludeKeywords: matchesExcludeKeywords,
+    filterExcluded: filterExcluded,
     parseTimeFormat: parseTimeFormat,
     is12Hour: is12Hour,
     pickCalendarColor: pickCalendarColor,
