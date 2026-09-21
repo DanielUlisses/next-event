@@ -176,7 +176,7 @@ Configure settings with `omarchy bar set tobiasz-p.next-event <key> <value>`:
 | `browserCommand`      | `""`    | Command used to open the Meet URL (`xdg-open` by default) |
 | `launchers`           | `""`    | JSON object mapping launcher names to command prefixes, e.g. `{"work":"google-chrome-stable --profile-directory=\"Profile 2\""}` (see [Per-calendar launchers](#per-calendar-launchers)) |
 | `calendarLaunchers`   | `""`    | JSON object mapping a calendar name to a launcher name, e.g. `{"Work":"work"}` |
-| `launcherRules`       | `""`    | JSON array of ordered override rules `{"match","calendar"?,"launcher"}` for joining specific meetings |
+| `launcherRules`       | `""`    | JSON array of ordered override rules `{"match"?,"provider"?,"calendar"?,"launcher"}` for joining specific meetings |
 | `calendarUrlBase`     | `"https://calendar.google.com/calendar"` | Base URL for "Open in Calendar" (opens `/r` route; set e.g. `https://calendar.google.com/calendar/u/1` for multi-account) |
 | `keyRefresh`          | `r`     | Panel key that force-refreshes the feeds            |
 | `keySettings`         | `,`     | Panel key that toggles the in-panel settings view   |
@@ -213,6 +213,23 @@ matching rule wins. In the example above, "Daily Sync" in the Work calendar open
 `teams-for-linux` while the other Work meetings open in Chrome profile 2. Teams join links
 (`https://teams.microsoft.com/l/meetup-join/…`) are passed to the launcher unchanged; only a
 single `teams-for-linux` instance is supported.
+
+Rules can also match the meeting's video provider (`Meet`, `Zoom`, `Teams`, `Webex`,
+`GoToMeeting`, case-insensitive) with `provider`. This suits setups where Teams calls are just
+links inside your regular calendars: send every Teams link to `teams-for-linux` while Meet and
+Zoom links keep opening in each calendar's Chrome profile.
+
+```sh
+omarchy bar set tobiasz-p.next-event launcherRules '[{"provider":"teams","launcher":"teams"}]'
+# only within one calendar:
+#   [{"provider":"teams","calendar":"Acme","launcher":"teams"}]
+# only for a specific meeting:
+#   [{"provider":"teams","match":"Daily Sync","launcher":"teams"}]
+```
+
+`match`, `calendar` and `provider` must all match (AND); a rule needs at least one of `match` or
+`provider`, otherwise it is ignored with a warning. An event without a video link never matches
+a provider rule. Provider rules only affect joining.
 
 Joining (Join button, join key, right-click on the bar, or a row click on an event with a
 video link) resolves: matching rule → calendar mapping → `browserCommand` → `xdg-open`.

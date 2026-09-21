@@ -25,13 +25,17 @@ function config(overrides) {
 
 const ics = (title, feedLabel) => ({ title, feedLabel, calendarName: "" })
 const json = (title, calendarName) => ({ title, feedLabel: null, calendarName })
+const withMeet = (event, meetUrl) => Object.assign({}, event, { meetUrl })
+
+const TEAMS_URL = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=x"
+const MEET_URL = "https://meet.google.com/abc-defg-hij"
 
 describe("parseLaunchers / parseCalendarLaunchers / parseLauncherRules", () => {
   it("parse JSON strings", () => {
     assert.deepEqual(Model.parseLaunchers('{"a":"cmd"}'), { a: "cmd" })
     assert.deepEqual(Model.parseCalendarLaunchers('{"Work":"a"}'), { Work: "a" })
     assert.deepEqual(Model.parseLauncherRules('[{"match":"x","launcher":"a"}]'), [
-      { match: "x", calendar: "", launcher: "a" }
+      { match: "x", provider: "", calendar: "", launcher: "a" }
     ])
   })
 
@@ -55,7 +59,7 @@ describe("parseLaunchers / parseCalendarLaunchers / parseLauncherRules", () => {
     const rules = Model.parseLauncherRules(
       '[{"match":"","launcher":"a"},{"match":"x"},7,{"match":"ok","launcher":"a"}]'
     )
-    assert.deepEqual(rules, [{ match: "ok", calendar: "", launcher: "a" }])
+    assert.deepEqual(rules, [{ match: "ok", provider: "", calendar: "", launcher: "a" }])
   })
 })
 
@@ -210,5 +214,98 @@ describe("resolveLauncher", () => {
 
   it("handles a missing event", () => {
     assert.equal(Model.resolveLauncher(null, "join", config()).source, "default")
+  })
+
+  describe("provider rules", () => {
+    const rulesOf = rules => config({ launcherRules: JSON.stringify(rules) })
+
+    it("provider-only rule matches by provider label, case-insensitively", () => {
+      for (const provider of ["teams", "Teams", "TEAMS"]) {
+        const r = Model.resolveLauncher(
+          withMeet(ics("1:1", "Acme"), TEAMS_URL),
+          "join",
+          rulesOf([{ provider, launcher: "teams" }])
+        )
+        assert.equal(r.source, "rule")
+        assert.equal(r.launcherName, "teams")
+      }
+    })
+
+    it("provider + calendar only applies within that calendar", () => {
+      const cfg = rulesOf([{ provider: "teams", calendar: "Acme", launcher: "teams" }])
+      const inside = Model.resolveLauncher(withMeet(ics("x", "Acme"), TEAMS_URL), "join", cfg)
+      assert.equal(inside.source, "rule")
+      const outside = Model.resolveLauncher(withMeet(ics("x", "Personal"), TEAMS_URL), "join", cfg)
+      assert.equal(outside.source, "calendar")
+      assert.equal(outside.launcherName, "personal")
+    })
+
+    it("provider + title requires both", () => {
+      const cfg = rulesOf([{ provider: "teams", match: "Daily Sync", launcher: "teams" }])
+      const both = Model.resolveLauncher(
+        withMeet(ics("Daily Sync", "Personal"), TEAMS_URL),
+        "join",
+        cfg
+      )
+      assert.equal(both.source, "rule")
+      const wrongTitle = Model.resolveLauncher(
+        withMeet(ics("1:1", "Personal"), TEAMS_URL),
+        "join",
+        cfg
+      )
+      assert.equal(wrongTitle.source, "calendar")
+      const wrongProvider = Model.resolveLauncher(
+        withMeet(ics("Daily Sync", "Personal"), MEET_URL),
+        "join",
+        cfg
+      )
+      assert.equal(wrongProvider.source, "calendar")
+    })
+
+    it("non-matching provider falls through to the calendar mapping", () => {
+      const r = Model.resolveLauncher(
+        withMeet(ics("1:1", "Work"), MEET_URL),
+        "join",
+        rulesOf([{ provider: "teams", launcher: "teams" }])
+      )
+      assert.equal(r.source, "calendar")
+      assert.equal(r.launcherName, "work")
+    })
+
+    it("an event without a meetUrl never matches a provider rule", () => {
+      const cfg = rulesOf([{ provider: "video", launcher: "teams" }])
+      for (const meetUrl of [undefined, null, ""]) {
+        const r = Model.resolveLauncher(withMeet(ics("1:1", "Work"), meetUrl), "join", cfg)
+        assert.equal(r.source, "calendar")
+      }
+      assert.equal(Model.resolveLauncher(ics("1:1", "Work"), "join", cfg).source, "calendar")
+    })
+
+    it("a rule with neither match nor provider is ignored with a warning", t => {
+      const warn = t.mock.method(console, "warn", () => {})
+      const rules = Model.parseLauncherRules('[{"calendar":"Work","launcher":"a"}]')
+      assert.deepEqual(rules, [])
+      assert.equal(warn.mock.callCount(), 1)
+      assert.match(warn.mock.calls[0].arguments[0], /match.*provider/)
+    })
+
+    it("provider rules do not affect open-in-calendar", () => {
+      const r = Model.resolveLauncher(
+        withMeet(ics("1:1", "Work"), TEAMS_URL),
+        "calendar",
+        rulesOf([{ provider: "teams", launcher: "teams" }])
+      )
+      assert.equal(r.source, "calendar")
+    })
+
+    it("dangling provider-rule launcher warns and falls through", () => {
+      const r = Model.resolveLauncher(
+        withMeet(ics("1:1", "Work"), TEAMS_URL),
+        "join",
+        rulesOf([{ provider: "teams", launcher: "ghost" }])
+      )
+      assert.equal(r.source, "calendar")
+      assert.match(r.warnings[0], /ghost/)
+    })
   })
 })

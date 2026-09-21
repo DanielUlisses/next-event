@@ -2340,8 +2340,8 @@ class LauncherResolver {
     return LauncherResolver.parseLaunchers(raw)
   }
 
-  // Ordered [{ match, calendar, launcher }]; rules missing a match or a
-  // launcher are dropped.
+  // Ordered [{ match, provider, calendar, launcher }]; rules missing a
+  // launcher, or with neither a match nor a provider, are dropped.
   static parseLauncherRules(raw) {
     var parsed = LauncherResolver._parseJson(raw)
     var rules = []
@@ -2351,9 +2351,19 @@ class LauncherResolver {
       if (!LauncherResolver._isPlainObject(rule)) continue
       var match = typeof rule.match === "string" ? rule.match.trim() : ""
       var launcher = typeof rule.launcher === "string" ? rule.launcher.trim() : ""
-      if (match === "" || launcher === "") continue
+      var provider = typeof rule.provider === "string" ? rule.provider.trim() : ""
+      if (launcher === "") continue
+      if (match === "" && provider === "") {
+        console.warn(
+          'next-event: launcherRules entry for launcher "' +
+            launcher +
+            '" needs a "match" or a "provider" and was ignored'
+        )
+        continue
+      }
       rules.push({
         match: match,
+        provider: provider,
         calendar: typeof rule.calendar === "string" ? rule.calendar.trim() : "",
         launcher: launcher
       })
@@ -2396,15 +2406,25 @@ class LauncherResolver {
       return null
     }
 
+    function describeRule(rule) {
+      var parts = []
+      if (rule.match !== "") parts.push('match "' + rule.match + '"')
+      if (rule.provider !== "") parts.push('provider "' + rule.provider + '"')
+      return parts.join(" ")
+    }
+
     if (action === "join") {
       var title = String((event && event.title) || "").toLowerCase()
+      var meetUrl = event && event.meetUrl
+      var provider = meetUrl ? MeetingLinkDetector.meetLabel(meetUrl).toLowerCase() : ""
       var rules = LauncherResolver.parseLauncherRules(cfg.launcherRules)
       for (var i = 0; i < rules.length; i++) {
         var rule = rules[i]
         if (rule.calendar !== "" && rule.calendar.toLowerCase() !== identity) continue
-        if (title.indexOf(rule.match.toLowerCase()) === -1) continue
+        if (rule.match !== "" && title.indexOf(rule.match.toLowerCase()) === -1) continue
+        if (rule.provider !== "" && rule.provider.toLowerCase() !== provider) continue
         // First matching rule wins; if it is broken, fall to the next level.
-        var byRule = tryLauncher(rule.launcher, "rule", 'launcherRules match "' + rule.match + '"')
+        var byRule = tryLauncher(rule.launcher, "rule", "launcherRules " + describeRule(rule))
         if (byRule) return byRule
         break
       }
