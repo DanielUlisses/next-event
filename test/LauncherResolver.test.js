@@ -358,3 +358,116 @@ describe("resolveLauncher", () => {
     })
   })
 })
+
+describe("per-calendar provider launchers", () => {
+  const PROVIDER_LAUNCHERS = JSON.stringify({
+    acme: "chrome-p1",
+    personal: "chrome-default",
+    "teams-personal": "teams-personal-cmd",
+    teams: "teams-for-linux"
+  })
+  const cfg = (calendarLaunchers, overrides) =>
+    config(
+      Object.assign(
+        { launchers: PROVIDER_LAUNCHERS, launcherRules: "", calendarLaunchers },
+        overrides
+      )
+    )
+  const PERSONAL = { Personal: { default: "personal", teams: "teams-personal" } }
+  const join = (event, calendars, overrides) =>
+    Model.resolveLauncher(event, "join", cfg(JSON.stringify(calendars), overrides))
+
+  it("parseCalendarLaunchers keeps string values and provider objects, dropping junk", () => {
+    assert.deepEqual(
+      Model.parseCalendarLaunchers(
+        '{"A":"a","B":{" Teams ":"t","default":"d","zoom":5},"C":7,"D":[1],"E":null}'
+      ),
+      { A: "a", B: { teams: "t", default: "d" } }
+    )
+  })
+
+  it("string values behave as before", () => {
+    const r = join(withMeet(ics("x", "Acme"), TEAMS_URL), { Acme: "acme" })
+    assert.equal(r.launcherName, "acme")
+    assert.equal(r.source, "calendar")
+  })
+
+  it("uses the provider launcher when the event's provider matches", () => {
+    const r = join(withMeet(ics("x", "Personal"), TEAMS_URL), PERSONAL)
+    assert.equal(r.launcherName, "teams-personal")
+    assert.equal(r.command, "teams-personal-cmd")
+    assert.equal(r.source, "calendar")
+  })
+
+  it("provider miss falls to the calendar default", () => {
+    const r = join(withMeet(ics("x", "Personal"), MEET_URL), PERSONAL)
+    assert.equal(r.launcherName, "personal")
+  })
+
+  it("an event without a video link uses the calendar default", () => {
+    assert.equal(join(ics("x", "Personal"), PERSONAL).launcherName, "personal")
+  })
+
+  it("an object without default skips that level to browserCommand", () => {
+    const r = join(
+      withMeet(ics("x", "Personal"), MEET_URL),
+      { Personal: { teams: "teams-personal" } },
+      { browserCommand: "firefox" }
+    )
+    assert.equal(r.source, "browserCommand")
+    assert.deepEqual(r.warnings, [])
+  })
+
+  it("provider keys match case-insensitively and unknown keys are ignored", () => {
+    const cals = { Personal: { DEFAULT: "personal", Teams: "teams-personal", bogus: "teams" } }
+    assert.equal(
+      join(withMeet(ics("x", "Personal"), TEAMS_URL), cals).launcherName,
+      "teams-personal"
+    )
+    assert.equal(join(withMeet(ics("x", "Personal"), MEET_URL), cals).launcherName, "personal")
+  })
+
+  it("open-in-calendar uses only the default, never a provider launcher", () => {
+    const r = Model.resolveLauncher(
+      withMeet(ics("x", "Personal"), TEAMS_URL),
+      "calendar",
+      cfg(JSON.stringify(PERSONAL))
+    )
+    assert.equal(r.launcherName, "personal")
+    const noDefault = Model.resolveLauncher(
+      withMeet(ics("x", "Personal"), TEAMS_URL),
+      "calendar",
+      cfg(JSON.stringify({ Personal: { teams: "teams-personal" } }))
+    )
+    assert.equal(noDefault.source, "default")
+  })
+
+  it("a matching rule still beats the calendar provider launcher", () => {
+    const rules = JSON.stringify([{ match: "Sync", launcher: "teams" }])
+    const r = join(withMeet(ics("Sync", "Personal"), TEAMS_URL), PERSONAL, {
+      launcherRules: rules
+    })
+    assert.equal(r.source, "rule")
+    assert.equal(r.launcherName, "teams")
+  })
+
+  it("dangling provider launcher warns and falls through to default", () => {
+    const r = join(withMeet(ics("x", "Personal"), TEAMS_URL), {
+      Personal: { default: "personal", teams: "ghost" }
+    })
+    assert.equal(r.launcherName, "personal")
+    assert.equal(r.warnings.length, 1)
+    assert.match(r.warnings[0], /ghost/)
+    assert.match(r.warnings[0], /Personal/)
+  })
+
+  it("dangling default falls through to browserCommand with a warning", () => {
+    const r = join(
+      withMeet(ics("x", "Personal"), MEET_URL),
+      { Personal: { default: "ghost" } },
+      { browserCommand: "firefox" }
+    )
+    assert.equal(r.source, "browserCommand")
+    assert.match(r.warnings[0], /ghost/)
+  })
+})

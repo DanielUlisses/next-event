@@ -8,11 +8,13 @@ Column {
 
   property string calendarName: ""
   property string currentLauncher: ""
+  property string currentTeamsLauncher: ""
   property var launcherNames: []
   property color contentForeground: Color.foreground
   property string contentFontFamily: Style.font.family
 
   signal launcherSelected(string launcherName)
+  signal teamsLauncherSelected(string launcherName)
 
   width: parent ? parent.width : 0
   spacing: Style.space(4)
@@ -49,6 +51,40 @@ Column {
         horizontalPadding: Style.space(8)
         verticalPadding: Style.space(4)
         onClicked: root.launcherSelected(modelData)
+      }
+    }
+  }
+
+  Text {
+    width: parent.width
+    textFormat: Text.PlainText
+    text: "Teams links"
+    color: Qt.darker(root.contentForeground, Tokens.dimMuted)
+    font.family: root.contentFontFamily
+    font.pixelSize: Style.font.caption
+  }
+
+  Flow {
+    width: parent.width
+    spacing: Style.space(6)
+
+    Repeater {
+      model: Model.calendarLauncherOptions(root.launcherNames, root.currentTeamsLauncher)
+
+      Button {
+        required property string modelData
+
+        text: modelData === "" ? "Same as calendar" : modelData
+        bordered: true
+        selected: root.currentTeamsLauncher === modelData
+        active: root.currentTeamsLauncher === modelData
+        foreground: root.contentForeground
+        accent: Color.accent
+        fontFamily: root.contentFontFamily
+        fontSize: Style.font.caption
+        horizontalPadding: Style.space(8)
+        verticalPadding: Style.space(4)
+        onClicked: root.teamsLauncherSelected(modelData)
       }
     }
   }

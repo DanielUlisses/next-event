@@ -102,3 +102,96 @@ describe("calendarLauncherOptions", () => {
     assert.deepEqual(Model.calendarLauncherOptions(["work"], "gone"), ["", "work", "gone"])
   })
 })
+
+describe("calendarLauncherChoice with provider objects", () => {
+  it("reads the default of an object value", () => {
+    assert.equal(Model.calendarLauncherChoice('{"Work":{"default":"w","teams":"t"}}', "work"), "w")
+  })
+
+  it("is empty when the object has no default", () => {
+    assert.equal(Model.calendarLauncherChoice('{"Work":{"teams":"t"}}', "Work"), "")
+  })
+})
+
+describe("calendarTeamsChoice / serializeCalendarTeams", () => {
+  it("reads the teams launcher, case-insensitively, or empty", () => {
+    assert.equal(Model.calendarTeamsChoice('{"Work":{"default":"w","Teams":"t"}}', "work"), "t")
+    assert.equal(Model.calendarTeamsChoice('{"Work":"w"}', "Work"), "")
+    assert.equal(Model.calendarTeamsChoice('{"Work":{"default":"w"}}', "Work"), "")
+    assert.equal(Model.calendarTeamsChoice("nope", "Work"), "")
+  })
+
+  it("converts a string value to the object form when a teams launcher is chosen", () => {
+    const json = Model.serializeCalendarTeams('{"Work":"w","Other":"o"}', "Work", "t")
+    assert.deepEqual(JSON.parse(json), { Work: { default: "w", teams: "t" }, Other: "o" })
+  })
+
+  it("creates an object without default for an unmapped calendar", () => {
+    const json = Model.serializeCalendarTeams("", "Work", "t")
+    assert.deepEqual(JSON.parse(json), { Work: { teams: "t" } })
+  })
+
+  it("updates an existing teams key in place and keeps other provider keys", () => {
+    const json = Model.serializeCalendarTeams(
+      '{"Work":{"default":"w","Teams":"old","zoom":"z"}}',
+      "Work",
+      "new"
+    )
+    assert.deepEqual(JSON.parse(json), { Work: { default: "w", Teams: "new", zoom: "z" } })
+  })
+
+  it("collapses back to a plain string when cleared and only default remains", () => {
+    const json = Model.serializeCalendarTeams('{"Work":{"default":"w","teams":"t"}}', "Work", "")
+    assert.deepEqual(JSON.parse(json), { Work: "w" })
+  })
+
+  it("keeps the object when clearing teams leaves other provider keys", () => {
+    const json = Model.serializeCalendarTeams(
+      '{"Work":{"default":"w","teams":"t","zoom":"z"}}',
+      "Work",
+      ""
+    )
+    assert.deepEqual(JSON.parse(json), { Work: { default: "w", zoom: "z" } })
+  })
+
+  it("removes the mapping when clearing leaves nothing, and is a no-op for strings", () => {
+    assert.equal(Model.serializeCalendarTeams('{"Work":{"teams":"t"}}', "Work", ""), "")
+    assert.equal(Model.serializeCalendarTeams('{"Work":"w"}', "Work", ""), '{"Work":"w"}')
+  })
+
+  it("round-trips string -> object -> string", () => {
+    const start = '{"Work":"w"}'
+    const withTeams = Model.serializeCalendarTeams(start, "Work", "t")
+    assert.equal(Model.serializeCalendarTeams(withTeams, "Work", ""), start)
+  })
+
+  it("ignores blank calendar names", () => {
+    assert.equal(Model.serializeCalendarTeams('{"a":"b"}', " ", "t"), '{"a":"b"}')
+  })
+})
+
+describe("serializeCalendarLauncher with provider objects", () => {
+  it("changes only default, keeping the teams key", () => {
+    const json = Model.serializeCalendarLauncher(
+      '{"Work":{"default":"w","teams":"t"}}',
+      "Work",
+      "x"
+    )
+    assert.deepEqual(JSON.parse(json), { Work: { default: "x", teams: "t" } })
+  })
+
+  it("clearing default keeps other provider keys, and drops an emptied object", () => {
+    assert.deepEqual(
+      JSON.parse(
+        Model.serializeCalendarLauncher('{"Work":{"default":"w","teams":"t"}}', "Work", "")
+      ),
+      { Work: { teams: "t" } }
+    )
+    assert.equal(Model.serializeCalendarLauncher('{"Work":{"default":"w"}}', "Work", ""), "")
+  })
+
+  it("adds a default to an object that lacks one", () => {
+    const json = Model.serializeCalendarLauncher('{"Work":{"teams":"t"}}', "Work", "w")
+    assert.deepEqual(JSON.parse(json), { Work: { teams: "t", default: "w" } })
+  })
+})

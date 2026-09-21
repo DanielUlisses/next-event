@@ -2342,9 +2342,28 @@ class LauncherResolver {
     return result
   }
 
-  // calendar name -> launcher name.
+  // calendar name -> launcher name, or { provider: launcher name } where the
+  // keys are trimmed and lowercased ("default" covers every other provider).
+  // Other values, and non-string entries of a provider object, are dropped.
   static parseCalendarLaunchers(raw) {
-    return LauncherResolver.parseLaunchers(raw)
+    var parsed = LauncherResolver._parseJson(raw)
+    var result = {}
+    if (!LauncherResolver._isPlainObject(parsed)) return result
+    for (var name in parsed) {
+      if (!Object.prototype.hasOwnProperty.call(parsed, name)) continue
+      var value = parsed[name]
+      if (typeof value === "string") {
+        result[name] = value
+      } else if (LauncherResolver._isPlainObject(value)) {
+        var byProvider = {}
+        for (var key in value) {
+          if (Object.prototype.hasOwnProperty.call(value, key) && typeof value[key] === "string")
+            byProvider[key.trim().toLowerCase()] = value[key]
+        }
+        result[name] = byProvider
+      }
+    }
+    return result
   }
 
   // Ordered [{ match, provider, calendar, launcher }]; rules missing a
@@ -2394,13 +2413,15 @@ class LauncherResolver {
   }
 
   // Returns { command, launcherName, source, warnings }. action is "join"
-  // (rule -> calendar -> browserCommand -> xdg-open) or "calendar" (rules
-  // skipped).
+  // (rule -> calendar provider launcher -> calendar default -> browserCommand
+  // -> xdg-open) or "calendar" (calendar default only).
   static resolve(event, action, config) {
     var cfg = config || {}
     var launchers = LauncherResolver.parseLaunchers(cfg.launchers)
     var warnings = []
     var identity = LauncherResolver.calendarIdentity(event)
+    var meetUrl = event && event.meetUrl
+    var provider = meetUrl ? MeetingLinkDetector.meetLabel(meetUrl).toLowerCase() : ""
 
     function tryLauncher(name, source, origin) {
       var command = LauncherResolver._launcherCommand(launchers, name)
@@ -2425,8 +2446,6 @@ class LauncherResolver {
 
     if (action === "join") {
       var title = String((event && event.title) || "").toLowerCase()
-      var meetUrl = event && event.meetUrl
-      var provider = meetUrl ? MeetingLinkDetector.meetLabel(meetUrl).toLowerCase() : ""
       var rules = LauncherResolver.parseLauncherRules(cfg.launcherRules, warnings)
       for (var i = 0; i < rules.length; i++) {
         var rule = rules[i]
@@ -2445,12 +2464,25 @@ class LauncherResolver {
       for (var calendar in calendars) {
         if (!Object.prototype.hasOwnProperty.call(calendars, calendar)) continue
         if (calendar.trim().toLowerCase() !== identity) continue
-        var byCalendar = tryLauncher(
-          calendars[calendar].trim(),
-          "calendar",
-          'calendarLaunchers "' + calendar + '"'
-        )
-        if (byCalendar) return byCalendar
+        var entry = calendars[calendar]
+        var origin = 'calendarLaunchers "' + calendar + '"'
+        if (typeof entry === "string") {
+          var byString = tryLauncher(entry.trim(), "calendar", origin)
+          if (byString) return byString
+          break
+        }
+        // Provider launcher (join only), then the calendar's default.
+        var levels = action === "join" && provider !== "" ? [provider, "default"] : ["default"]
+        for (var j = 0; j < levels.length; j++) {
+          var level = levels[j]
+          if (!Object.prototype.hasOwnProperty.call(entry, level)) continue
+          var byObject = tryLauncher(
+            entry[level].trim(),
+            "calendar",
+            level === "default" ? origin : origin + ' provider "' + level + '"'
+          )
+          if (byObject) return byObject
+        }
         break
       }
     }
@@ -2576,32 +2608,105 @@ class LauncherSettings {
     return null
   }
 
-  static calendarChoice(raw, calendar) {
-    var mapping = LauncherResolver.parseCalendarLaunchers(raw)
-    var key = LauncherSettings._calendarKey(mapping, calendar)
-    return key === null ? "" : mapping[key].trim()
+  // The launcher part of a calendar mapping value: the string itself, or an
+  // object's "default".
+  static _defaultOf(value) {
+    if (typeof value === "string") return value.trim()
+    if (LauncherResolver._isPlainObject(value) && typeof value["default"] === "string")
+      return value["default"].trim()
+    return ""
   }
 
-  // An empty launcher means "Default" and removes the mapping.
-  static serializeCalendarChoice(raw, calendar, launcher) {
+  // Case-insensitive own key of a provider object, or null.
+  static _providerKey(obj, provider) {
+    for (var key in obj) {
+      if (LauncherSettings._has(obj, key) && key.trim().toLowerCase() === provider) return key
+    }
+    return null
+  }
+
+  // Rebuilds the mapping with `update(value)` applied to the calendar's entry
+  // (undefined = no entry yet); a returned undefined/null drops the entry. Case
+  // variants of the calendar name collapse into the first one.
+  static _updateCalendar(raw, calendar, update) {
     var name = String(calendar || "").trim()
     if (name === "") return String(raw === null || raw === undefined ? "" : raw)
     var mapping = LauncherSettings._objectOrEmpty(raw)
     var identity = name.toLowerCase()
-    var target = String(launcher || "").trim()
     var result = {}
-    var written = false
+    var found = false
     for (var key in mapping) {
       if (!LauncherSettings._has(mapping, key)) continue
       if (key.trim().toLowerCase() !== identity) {
         result[key] = mapping[key]
-      } else if (target !== "" && !written) {
-        result[key] = target
-        written = true
+      } else if (!found) {
+        found = true
+        var next = update(mapping[key])
+        if (next !== undefined && next !== null) result[key] = next
       }
     }
-    if (target !== "" && !written) result[name] = target
+    if (!found) {
+      var created = update(undefined)
+      if (created !== undefined && created !== null) result[name] = created
+    }
     return LauncherSettings._stringify(result)
+  }
+
+  static calendarChoice(raw, calendar) {
+    var mapping = LauncherResolver.parseCalendarLaunchers(raw)
+    var key = LauncherSettings._calendarKey(mapping, calendar)
+    return key === null ? "" : LauncherSettings._defaultOf(mapping[key])
+  }
+
+  // An empty launcher means "Default" and removes the calendar's default;
+  // provider launchers of an object value are kept.
+  static serializeCalendarChoice(raw, calendar, launcher) {
+    var target = String(launcher || "").trim()
+    return LauncherSettings._updateCalendar(raw, calendar, function (value) {
+      if (!LauncherResolver._isPlainObject(value)) return target === "" ? null : target
+      var copy = {}
+      for (var k in value) if (LauncherSettings._has(value, k)) copy[k] = value[k]
+      if (target !== "") copy["default"] = target
+      else delete copy["default"]
+      return LauncherSettings._stringify(copy) === "" ? null : copy
+    })
+  }
+
+  // The calendar's Teams launcher, or "".
+  static teamsChoice(raw, calendar) {
+    var mapping = LauncherResolver.parseCalendarLaunchers(raw)
+    var key = LauncherSettings._calendarKey(mapping, calendar)
+    if (key === null || typeof mapping[key] === "string") return ""
+    return mapping[key].teams || ""
+  }
+
+  // A string value becomes { default, teams } when a Teams launcher is chosen
+  // and goes back to a string once cleared with only `default` left; other
+  // provider keys are kept. An empty launcher clears the Teams choice.
+  static serializeCalendarTeams(raw, calendar, launcher) {
+    var target = String(launcher || "").trim()
+    return LauncherSettings._updateCalendar(raw, calendar, function (value) {
+      var obj = {}
+      if (typeof value === "string") {
+        if (value.trim() !== "") obj["default"] = value
+      } else if (LauncherResolver._isPlainObject(value)) {
+        for (var k in value) if (LauncherSettings._has(value, k)) obj[k] = value[k]
+      } else if (target === "") {
+        return null
+      }
+      var teamsKey = LauncherSettings._providerKey(obj, "teams")
+      if (target !== "") {
+        obj[teamsKey === null ? "teams" : teamsKey] = target
+        return obj
+      }
+      if (teamsKey === null) return value === undefined ? null : value
+      delete obj[teamsKey]
+      var keys = Object.keys(obj)
+      if (keys.length === 0) return null
+      if (keys.length === 1 && keys[0] === "default" && typeof obj["default"] === "string")
+        return obj["default"]
+      return obj
+    })
   }
 
   // Picker choices: "" (Default), launcher names, and the current value if it
@@ -2638,6 +2743,12 @@ function calendarLauncherChoice(raw, calendar) {
 }
 function serializeCalendarLauncher(raw, calendar, launcher) {
   return LauncherSettings.serializeCalendarChoice(raw, calendar, launcher)
+}
+function calendarTeamsChoice(raw, calendar) {
+  return LauncherSettings.teamsChoice(raw, calendar)
+}
+function serializeCalendarTeams(raw, calendar, launcher) {
+  return LauncherSettings.serializeCalendarTeams(raw, calendar, launcher)
 }
 function calendarLauncherOptions(launcherNames, current) {
   return LauncherSettings.choiceOptions(launcherNames, current)
@@ -2779,6 +2890,8 @@ if (typeof module !== "undefined" && module.exports) {
     serializeLaunchers: serializeLaunchers,
     calendarLauncherChoice: calendarLauncherChoice,
     serializeCalendarLauncher: serializeCalendarLauncher,
+    calendarTeamsChoice: calendarTeamsChoice,
+    serializeCalendarTeams: serializeCalendarTeams,
     calendarLauncherOptions: calendarLauncherOptions,
     eventCalendarUrl: eventCalendarUrl,
     formatLabel: formatLabel,

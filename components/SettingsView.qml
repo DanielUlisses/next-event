@@ -139,6 +139,10 @@ Item {
     root.settingChanged("calendarLaunchers", Model.serializeCalendarLauncher(root.rawSetting("calendarLaunchers"), calendar, launcher))
   }
 
+  function setCalendarTeamsLauncher(calendar, launcher) {
+    root.settingChanged("calendarLaunchers", Model.serializeCalendarTeams(root.rawSetting("calendarLaunchers"), calendar, launcher))
+  }
+
   function launchersHaveFocus() {
     for (var i = 0; i < launchersRepeater.count; i++) {
       var item = launchersRepeater.itemAt(i)
@@ -591,10 +595,12 @@ Item {
           width: settingsColumn.width
           calendarName: modelData
           currentLauncher: Model.calendarLauncherChoice(root.rawSetting("calendarLaunchers"), modelData)
+          currentTeamsLauncher: Model.calendarTeamsChoice(root.rawSetting("calendarLaunchers"), modelData)
           launcherNames: root.launcherNames
           contentForeground: root.contentForeground
           contentFontFamily: root.contentFontFamily
           onLauncherSelected: function(name) { root.setCalendarLauncher(modelData, name) }
+          onTeamsLauncherSelected: function(name) { root.setCalendarTeamsLauncher(modelData, name) }
         }
       }
     }

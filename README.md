@@ -175,7 +175,7 @@ Configure settings with `omarchy bar set tobiasz-p.next-event <key> <value>`:
 | `colorOnBar`          | `false` | Also tint the bar widget text using the next meeting's calendar color (requires `useCalendarColors` to be `true`) |
 | `browserCommand`      | `""`    | Command used to open the Meet URL (`xdg-open` by default) |
 | `launchers`           | `""`    | JSON object mapping launcher names to command prefixes, e.g. `{"work":"google-chrome-stable --profile-directory=\"Profile 2\""}` (see [Per-calendar launchers](#per-calendar-launchers)) |
-| `calendarLaunchers`   | `""`    | JSON object mapping a calendar name to a launcher name, e.g. `{"Work":"work"}` |
+| `calendarLaunchers`   | `""`    | JSON object mapping a calendar name to a launcher name, or to an object of launcher names per video provider, e.g. `{"Work":"work","Personal":{"default":"personal","teams":"teams-personal"}}` |
 | `launcherRules`       | `""`    | JSON array of ordered override rules `{"match"?,"provider"?,"calendar"?,"launcher"}` for joining specific meetings |
 | `calendarUrlBase`     | `"https://calendar.google.com/calendar"` | Base URL for "Open in Calendar" (opens `/r` route; set e.g. `https://calendar.google.com/calendar/u/1` for multi-account) |
 | `keyRefresh`          | `r`     | Panel key that force-refreshes the feeds            |
@@ -231,13 +231,38 @@ omarchy bar set tobiasz-p.next-event launcherRules '[{"provider":"teams","launch
 `provider`, otherwise it is ignored with a warning. An event without a video link never matches
 a provider rule. Provider rules only affect joining.
 
+### Per-calendar provider launchers
+
+A `calendarLaunchers` value can also be an object keyed by video provider, so a calendar can
+send its Teams calls to a specific Teams instance without a rule. Keys are the lowercase
+provider names (`teams`, `zoom`, `meet`, `webex`, `gotomeeting`, matched case-insensitively);
+`default` covers every other link. Unknown keys are ignored. For example:
+
+- Acme: every link, even Teams, opens in Chrome `Profile 1`.
+- Personal: Chrome `Default`, but Teams links go to a personal teams-for-linux instance.
+- Globex: Chrome `Profile 2`, Teams links go to the default teams-for-linux.
+
+```sh
+omarchy bar set tobiasz-p.next-event launchers '{"acme":"google-chrome-stable --profile-directory=\"Profile 1\"","personal":"google-chrome-stable --profile-directory=\"Default\"","globex":"google-chrome-stable --profile-directory=\"Profile 2\"","teams":"teams-for-linux","teams-personal":"teams-for-linux --user-data-dir=$HOME/.config/teams-personal"}'
+omarchy bar set tobiasz-p.next-event calendarLaunchers '{"Acme":"acme","Personal":{"default":"personal","teams":"teams-personal"},"Globex":{"default":"globex","teams":"teams"}}'
+```
+
+Joining resolves: matching rule → the calendar's launcher for the event's provider → the
+calendar's `default` → `browserCommand` → `xdg-open`. "Open in calendar" only ever uses the
+calendar's `default`. A missing, unknown or empty launcher at any level falls through to the
+next one with a warning; an object without `default` just skips that level. This replaces
+calendar-scoped provider rules (`{"provider":"teams","calendar":"Acme",…}`), which keep
+working but are no longer needed for this.
+
 The in-panel settings view (`,` key) has a **Launchers** section that edits `launchers` (name +
 command rows; rows with a blank or duplicate name are not saved) and `calendarLaunchers` (one
-row per calendar: *Default* or a launcher). It preserves whatever else is in those JSON values.
+row per calendar: *Default* or a launcher, plus a **Teams links** picker: *Same as calendar* or a
+launcher, which switches the value to the object form and back to a plain string when cleared).
+Other provider keys set via JSON are kept. It preserves whatever else is in those JSON values.
 `launcherRules` stays JSON-only and is never touched by the UI.
 
 Joining (Join button, join key, right-click on the bar, or a row click on an event with a
-video link) resolves: matching rule → calendar mapping → `browserCommand` → `xdg-open`.
+video link) resolves: matching rule → calendar mapping (provider launcher, then default) → `browserCommand` → `xdg-open`.
 "Open in Calendar" skips the rules: calendar mapping → `browserCommand` → `xdg-open`.
 
 Invalid JSON is ignored. A rule or mapping that names an unknown launcher, or a launcher with
