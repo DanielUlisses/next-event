@@ -175,6 +175,9 @@ Configure settings with `omarchy bar set tobiasz-p.next-event <key> <value>`:
 | `colorOnBar`          | `false` | Also tint the bar widget text using the next meeting's calendar color (requires `useCalendarColors` to be `true`) |
 | `excludeKeywords`     | `""`    | Comma-separated keywords; events whose title contains any of them (case-insensitive) are hidden everywhere, e.g. `Lunch,Focus time,OOO` |
 | `browserCommand`      | `""`    | Command used to open the Meet URL (`xdg-open` by default) |
+| `launchers`           | `""`    | JSON object mapping launcher names to command prefixes, e.g. `{"work":"google-chrome-stable --profile-directory=\"Profile 2\""}` (see [Per-calendar launchers](#per-calendar-launchers)) |
+| `calendarLaunchers`   | `""`    | JSON object mapping a calendar name to a launcher name, or to an object of launcher names per video provider, e.g. `{"Work":"work","Personal":{"default":"personal","teams":"teams-personal"}}` |
+| `launcherRules`       | `""`    | JSON array of ordered override rules `{"match"?,"provider"?,"calendar"?,"launcher"}` for joining specific meetings |
 | `calendarUrlBase`     | `"https://calendar.google.com/calendar"` | Base URL for "Open in Calendar" (opens `/r` route; set e.g. `https://calendar.google.com/calendar/u/1` for multi-account) |
 | `keyRefresh`          | `r`     | Panel key that force-refreshes the feeds            |
 | `keySettings`         | `,`     | Panel key that toggles the in-panel settings view   |
@@ -183,6 +186,113 @@ Configure settings with `omarchy bar set tobiasz-p.next-event <key> <value>`:
 
 Keys must be a single letter, digit, or punctuation mark. Arrows and `j`/`k`/`h`/`l` are reserved
 for panel navigation and cannot be rebound.
+
+## Per-calendar launchers
+
+By default every link is opened with `browserCommand` (or `xdg-open`). To open each
+calendar's meetings in a different browser profile or app, define named launchers, map
+calendars to them, and optionally add rules for individual recurring meetings. All three
+settings are JSON and empty by default, which keeps the behaviour above unchanged.
+
+A launcher is a name and a command prefix; the URL is shell-quoted and appended, exactly as
+with `browserCommand`. A calendar is identified by its feed label (`label|url` in `icsUrl`)
+or, in JSON/OAuth mode, its calendar name; names are matched trimmed, case-insensitive and in
+full.
+
+```sh
+omarchy bar set tobiasz-p.next-event launchers '{"work":"google-chrome-stable --profile-directory=\"Profile 2\"","personal":"google-chrome-stable --profile-directory=\"Profile 3\"","teams":"teams-for-linux"}'
+omarchy bar set tobiasz-p.next-event calendarLaunchers '{"Work":"work","Personal":"personal"}'
+omarchy bar set tobiasz-p.next-event launcherRules '[{"match":"Daily Sync","calendar":"Work","launcher":"teams"}]'
+```
+
+`--profile-directory` takes the profile **folder** name (`Default`, `Profile 2`, …), not the
+display name shown in Chrome. Find the folders under `~/.config/google-chrome/`.
+
+Rules send a specific meeting somewhere else: `match` is a case-insensitive substring of the
+event title, the optional `calendar` restricts the rule to one calendar, and the first
+matching rule wins. In the example above, "Daily Sync" in the Work calendar opens in
+`teams-for-linux` while the other Work meetings open in Chrome profile 2. Teams join links
+(`https://teams.microsoft.com/l/meetup-join/…`) are passed to the launcher unchanged; for
+several Teams accounts see [Multiple Teams accounts](#multiple-teams-accounts).
+
+Rules can also match the meeting's video provider (`Meet`, `Zoom`, `Teams`, `Webex`,
+`GoToMeeting`, case-insensitive) with `provider`. This suits setups where Teams calls are just
+links inside your regular calendars: send every Teams link to `teams-for-linux` while Meet and
+Zoom links keep opening in each calendar's Chrome profile.
+
+```sh
+omarchy bar set tobiasz-p.next-event launcherRules '[{"provider":"teams","launcher":"teams"}]'
+# only within one calendar:
+#   [{"provider":"teams","calendar":"Acme","launcher":"teams"}]
+# only for a specific meeting:
+#   [{"provider":"teams","match":"Daily Sync","launcher":"teams"}]
+```
+
+`match`, `calendar` and `provider` must all match (AND); a rule needs at least one of `match` or
+`provider`, otherwise it is ignored with a warning. An event without a video link never matches
+a provider rule. Provider rules only affect joining.
+
+### Per-calendar provider launchers
+
+A `calendarLaunchers` value can also be an object keyed by video provider, so a calendar can
+send its Teams calls to a specific Teams instance without a rule. Keys are the lowercase
+provider names (`teams`, `zoom`, `meet`, `webex`, `gotomeeting`, matched case-insensitively);
+`default` covers every other link. Unknown keys are ignored. For example:
+
+- Acme: every link, even Teams, opens in Chrome `Profile 1`.
+- Personal: Chrome `Default`, but Teams links go to a personal teams-for-linux instance.
+- Globex: Chrome `Profile 2`, Teams links go to the default teams-for-linux.
+
+```sh
+omarchy bar set tobiasz-p.next-event launchers '{"acme":"google-chrome-stable --profile-directory=\"Profile 1\"","personal":"google-chrome-stable --profile-directory=\"Default\"","globex":"google-chrome-stable --profile-directory=\"Profile 2\"","teams":"teams-for-linux","teams-personal":"teams-for-linux --user-data-dir=$HOME/.config/teams-personal"}'
+omarchy bar set tobiasz-p.next-event calendarLaunchers '{"Acme":"acme","Personal":{"default":"personal","teams":"teams-personal"},"Globex":{"default":"globex","teams":"teams"}}'
+```
+
+Joining resolves: matching rule → the calendar's launcher for the event's provider → the
+calendar's `default` → `browserCommand` → `xdg-open`. "Open in calendar" only ever uses the
+calendar's `default`. A missing, unknown or empty launcher at any level falls through to the
+next one with a warning; an object without `default` just skips that level. This replaces
+calendar-scoped provider rules (`{"provider":"teams","calendar":"Acme",…}`), which keep
+working but are no longer needed for this.
+
+The in-panel settings view (`,` key) has a **Launchers** section that edits `launchers` (name +
+command rows; rows with a blank or duplicate name are not saved) and `calendarLaunchers` (one
+row per calendar: *Default* or a launcher, plus a **Teams links** picker: *Same as calendar* or a
+launcher, which switches the value to the object form and back to a plain string when cleared).
+Other provider keys set via JSON are kept. It preserves whatever else is in those JSON values.
+`launcherRules` stays JSON-only and is never touched by the UI.
+
+Joining (Join button, join key, right-click on the bar, or a row click on an event with a
+video link) resolves: matching rule → calendar mapping (provider launcher, then default) → `browserCommand` → `xdg-open`.
+"Open in Calendar" skips the rules: calendar mapping → `browserCommand` → `xdg-open`.
+
+Invalid JSON is ignored. A rule or mapping that names an unknown launcher, or a launcher with
+an empty command, falls through to the next level and logs a warning naming the bad
+reference, so a click always opens something.
+
+### Multiple Teams accounts
+
+teams-for-linux supports separate accounts by running one instance per `--user-data-dir`; the
+single-instance lock is per data directory, so a join link handed to a launcher reaches the
+instance that owns that directory (or starts it if it is not running). Define one launcher per
+instance and route with rules:
+
+```sh
+omarchy bar set tobiasz-p.next-event launchers '{"teams":"teams-for-linux","teams-personal":"teams-for-linux --class=teams-personal --user-data-dir=/home/you/.config/teams-personal"}'
+omarchy bar set tobiasz-p.next-event launcherRules '[{"provider":"teams","match":"Book Club","launcher":"teams-personal"},{"provider":"teams","calendar":"Personal","launcher":"teams-personal"},{"provider":"teams","launcher":"teams"}]'
+```
+
+Here the recurring "Book Club" call goes to the personal instance even when it lives in another
+calendar, every other Teams call in the Personal calendar does too, and all remaining Teams
+calls open in the default instance. Rules are checked in order and the first match wins, so put
+specific `match` rules first, then `calendar` + `provider` rules, and the broad `provider` rule
+last; a broad rule placed first would shadow everything below it.
+
+- Launcher commands run through `bash -lc`, so `$HOME` expands, but `~` does not expand after
+  an `=` (`--user-data-dir=~/x` stays literal). Use `$HOME/…` or an absolute path.
+- `--class` gives each instance its own window class, so Hyprland window rules and
+  `hyprctl clients` can tell the accounts apart. Use the same value the instance was started
+  with.
 
 ## Opening the panel from the keyboard
 

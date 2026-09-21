@@ -14,6 +14,7 @@ Item {
   property bool use12Hour: false
   property color contentForeground: Color.foreground
   property string contentFontFamily: Style.font.family
+  property string launcherName: ""
   property bool cursorOnJoin: false
   property bool cursorOnCalendar: false
 
@@ -119,7 +120,7 @@ Item {
           id: joinButton
           visible: !!(root.next && root.next.meetUrl)
           Layout.fillWidth: true
-          text: Model.LABEL_JOIN_MEETING
+          text: Model.joinLabel(root.launcherName)
           iconText: Model.ICON_MEETING_VIDEO
           selected: true
           accent: Color.accent

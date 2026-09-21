@@ -2,7 +2,7 @@
 
 const { describe, it } = require("node:test")
 const assert = require("node:assert/strict")
-const { DisplayFormatter, CalendarEvent } = require("../Model.js")
+const { DisplayFormatter, CalendarEvent, resolveLauncher } = require("../Model.js")
 
 describe("DisplayFormatter", () => {
   const now = new Date(2026, 7, 28, 9, 0, 0)
@@ -292,6 +292,54 @@ describe("DisplayFormatter", () => {
         DisplayFormatter.tooltipLine(true, null, now, { lastFetchFailed: true }),
         "NextEvent — No upcoming events (offline)"
       )
+    })
+  })
+
+  describe("launcher label", () => {
+    const cfg = {
+      launchers: JSON.stringify({ work: "chrome --profile=2", teams: "teams-for-linux" }),
+      calendarLaunchers: JSON.stringify({ Work: "work" }),
+      launcherRules: JSON.stringify([{ match: "Sprint", launcher: "teams" }])
+    }
+    const nameFor = (event, config) => resolveLauncher(event, "join", config).launcherName
+
+    it("joinLabel appends a named launcher and is plain otherwise", () => {
+      assert.strictEqual(DisplayFormatter.joinLabel("work"), "Join Meeting · work")
+      assert.strictEqual(DisplayFormatter.joinLabel(""), "Join Meeting")
+      assert.strictEqual(DisplayFormatter.joinLabel(undefined), "Join Meeting")
+    })
+
+    it("shows the calendar-mapped launcher name in label and tooltip", () => {
+      const name = nameFor(timedEvent, { ...cfg, launcherRules: "" })
+      assert.strictEqual(name, "work")
+      assert.strictEqual(DisplayFormatter.joinLabel(name), "Join Meeting · work")
+      assert.strictEqual(
+        DisplayFormatter.tooltipLine(true, timedEvent, now, { launcherName: name }),
+        "Work · Sprint Review · 10:00–11:00 (starts at 10:00) · via work"
+      )
+    })
+
+    it("shows the rule-resolved launcher name", () => {
+      const name = nameFor(timedEvent, cfg)
+      assert.strictEqual(name, "teams")
+      assert.strictEqual(DisplayFormatter.joinLabel(name), "Join Meeting · teams")
+      assert.ok(
+        DisplayFormatter.tooltipLine(true, timedEvent, now, { launcherName: name }).endsWith(
+          " · via teams"
+        )
+      )
+    })
+
+    it("shows nothing extra when falling back to browserCommand or xdg-open", () => {
+      for (const browserCommand of ["", "firefox"]) {
+        const name = nameFor(timedEvent, { browserCommand })
+        assert.strictEqual(name, "")
+        assert.strictEqual(DisplayFormatter.joinLabel(name), "Join Meeting")
+        assert.strictEqual(
+          DisplayFormatter.tooltipLine(true, timedEvent, now, { launcherName: name }),
+          "Work · Sprint Review · 10:00–11:00 (starts at 10:00)"
+        )
+      }
     })
   })
 

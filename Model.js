@@ -2216,12 +2216,18 @@ class DisplayFormatter {
     return ""
   }
 
+  // Join button text; launcherName comes from LauncherResolver ("" = fallback).
+  static joinLabel(launcherName) {
+    return launcherName ? LABEL_JOIN_MEETING + " · " + launcherName : LABEL_JOIN_MEETING
+  }
+
   static tooltipLine(configured, nextMeeting, now, options) {
     options = options || {}
     var lastFetchFailed = options.lastFetchFailed === true
     var offlineFeedCount = options.offlineFeedCount || 0
     var showCalendarLabel = options.showCalendarLabel !== false
     var use12Hour = options.use12Hour === true
+    var launcherName = options.launcherName || ""
 
     if (!configured) return "NextEvent — No calendar configured\nClick to set up"
     if (!nextMeeting) {
@@ -2243,6 +2249,7 @@ class DisplayFormatter {
     var status = DisplayFormatter.relativeStatus(nextMeeting, now, use12Hour)
     var line = title + " · " + range + (status ? " (" + status + ")" : "")
     if (showCalendarLabel && nextMeeting.feedLabel) line = nextMeeting.feedLabel + " · " + line
+    if (launcherName) line += " · via " + launcherName
     if (lastFetchFailed) line += " · " + STATUS_OFFLINE
     else if (offlineFeedCount > 0)
       line +=
@@ -2333,6 +2340,193 @@ class PanelNavigationModel {
   }
 }
 
+// --- Launcher routing ------------------------------------------------------
+// Chooses which command opens a meeting/calendar URL. Settings are JSON
+// strings (from `omarchy bar set`); anything invalid is ignored.
+
+class LauncherResolver {
+  static _parseJson(raw) {
+    if (raw !== null && typeof raw === "object") return raw
+    var text = String(raw === null || raw === undefined ? "" : raw).trim()
+    if (text === "") return null
+    try {
+      return JSON.parse(text)
+    } catch (_e) {
+      return null
+    }
+  }
+
+  static _isPlainObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+  }
+
+  // name -> command prefix. Non-string values are dropped; empty commands are
+  // kept so a reference to them can be reported at resolve time.
+  static parseLaunchers(raw) {
+    var parsed = LauncherResolver._parseJson(raw)
+    var result = {}
+    if (!LauncherResolver._isPlainObject(parsed)) return result
+    for (var name in parsed) {
+      if (Object.prototype.hasOwnProperty.call(parsed, name) && typeof parsed[name] === "string") {
+        result[name] = parsed[name]
+      }
+    }
+    return result
+  }
+
+  // calendar name -> launcher name, or { provider: launcher name } where the
+  // keys are trimmed and lowercased ("default" covers every other provider).
+  // Other values, and non-string entries of a provider object, are dropped.
+  static parseCalendarLaunchers(raw) {
+    var parsed = LauncherResolver._parseJson(raw)
+    var result = {}
+    if (!LauncherResolver._isPlainObject(parsed)) return result
+    for (var name in parsed) {
+      if (!Object.prototype.hasOwnProperty.call(parsed, name)) continue
+      var value = parsed[name]
+      if (typeof value === "string") {
+        result[name] = value
+      } else if (LauncherResolver._isPlainObject(value)) {
+        var byProvider = {}
+        for (var key in value) {
+          if (Object.prototype.hasOwnProperty.call(value, key) && typeof value[key] === "string")
+            byProvider[key.trim().toLowerCase()] = value[key]
+        }
+        result[name] = byProvider
+      }
+    }
+    return result
+  }
+
+  // Ordered [{ match, provider, calendar, launcher }]; rules missing a
+  // launcher, or with neither a match nor a provider, are dropped. Warnings go
+  // to `warnings` when given (the resolver runs inside reactive bindings and
+  // must not log on every re-evaluation), otherwise to console.warn.
+  static parseLauncherRules(raw, warnings) {
+    var parsed = LauncherResolver._parseJson(raw)
+    var rules = []
+    if (!Array.isArray(parsed)) return rules
+    for (var i = 0; i < parsed.length; i++) {
+      var rule = parsed[i]
+      if (!LauncherResolver._isPlainObject(rule)) continue
+      var match = typeof rule.match === "string" ? rule.match.trim() : ""
+      var launcher = typeof rule.launcher === "string" ? rule.launcher.trim() : ""
+      var provider = typeof rule.provider === "string" ? rule.provider.trim() : ""
+      if (launcher === "") continue
+      if (match === "" && provider === "") {
+        var message =
+          'next-event: launcherRules entry for launcher "' +
+          launcher +
+          '" needs a "match" or a "provider" and was ignored'
+        if (Array.isArray(warnings)) warnings.push(message)
+        else console.warn(message)
+        continue
+      }
+      rules.push({
+        match: match,
+        provider: provider,
+        calendar: typeof rule.calendar === "string" ? rule.calendar.trim() : "",
+        launcher: launcher
+      })
+    }
+    return rules
+  }
+
+  static calendarIdentity(event) {
+    return String((event && (event.feedLabel || event.calendarName)) || "")
+      .trim()
+      .toLowerCase()
+  }
+
+  static _launcherCommand(launchers, name) {
+    if (!Object.prototype.hasOwnProperty.call(launchers, name)) return null
+    var command = launchers[name].trim()
+    return command === "" ? "" : command
+  }
+
+  // Returns { command, launcherName, source, warnings }. action is "join"
+  // (rule -> calendar provider launcher -> calendar default -> browserCommand
+  // -> xdg-open) or "calendar" (calendar default only).
+  static resolve(event, action, config) {
+    var cfg = config || {}
+    var launchers = LauncherResolver.parseLaunchers(cfg.launchers)
+    var warnings = []
+    var identity = LauncherResolver.calendarIdentity(event)
+    var meetUrl = event && event.meetUrl
+    var provider = meetUrl ? MeetingLinkDetector.meetLabel(meetUrl).toLowerCase() : ""
+
+    function tryLauncher(name, source, origin) {
+      var command = LauncherResolver._launcherCommand(launchers, name)
+      if (command === null) {
+        warnings.push("next-event: " + origin + ' references unknown launcher "' + name + '"')
+      } else if (command === "") {
+        warnings.push(
+          'next-event: launcher "' + name + '" (from ' + origin + ") has an empty command"
+        )
+      } else {
+        return { command: command, launcherName: name, source: source, warnings: warnings }
+      }
+      return null
+    }
+
+    function describeRule(rule) {
+      var parts = []
+      if (rule.match !== "") parts.push('match "' + rule.match + '"')
+      if (rule.provider !== "") parts.push('provider "' + rule.provider + '"')
+      return parts.join(" ")
+    }
+
+    if (action === "join") {
+      var title = String((event && event.title) || "").toLowerCase()
+      var rules = LauncherResolver.parseLauncherRules(cfg.launcherRules, warnings)
+      for (var i = 0; i < rules.length; i++) {
+        var rule = rules[i]
+        if (rule.calendar !== "" && rule.calendar.toLowerCase() !== identity) continue
+        if (rule.match !== "" && title.indexOf(rule.match.toLowerCase()) === -1) continue
+        if (rule.provider !== "" && rule.provider.toLowerCase() !== provider) continue
+        // First matching rule wins; if it is broken, fall to the next level.
+        var byRule = tryLauncher(rule.launcher, "rule", "launcherRules " + describeRule(rule))
+        if (byRule) return byRule
+        break
+      }
+    }
+
+    if (identity !== "") {
+      var calendars = LauncherResolver.parseCalendarLaunchers(cfg.calendarLaunchers)
+      for (var calendar in calendars) {
+        if (!Object.prototype.hasOwnProperty.call(calendars, calendar)) continue
+        if (calendar.trim().toLowerCase() !== identity) continue
+        var entry = calendars[calendar]
+        var origin = 'calendarLaunchers "' + calendar + '"'
+        if (typeof entry === "string") {
+          var byString = tryLauncher(entry.trim(), "calendar", origin)
+          if (byString) return byString
+          break
+        }
+        // Provider launcher (join only), then the calendar's default.
+        var levels = action === "join" && provider !== "" ? [provider, "default"] : ["default"]
+        for (var j = 0; j < levels.length; j++) {
+          var level = levels[j]
+          if (!Object.prototype.hasOwnProperty.call(entry, level)) continue
+          var byObject = tryLauncher(
+            entry[level].trim(),
+            "calendar",
+            level === "default" ? origin : origin + ' provider "' + level + '"'
+          )
+          if (byObject) return byObject
+        }
+        break
+      }
+    }
+
+    var browser = String(cfg.browserCommand || "").trim()
+    if (browser !== "") {
+      return { command: browser, launcherName: "", source: "browserCommand", warnings: warnings }
+    }
+    return { command: "xdg-open", launcherName: "", source: "default", warnings: warnings }
+  }
+}
+
 // --- Public API Functions (exposed directly to QML) ------------------------
 
 function parseIcs(text, options) {
@@ -2391,6 +2585,213 @@ function meetLabel(url) {
   return MeetingLinkDetector.meetLabel(url)
 }
 
+// --- Launcher settings editing ---------------------------------------------
+// Pure helpers behind the settings UI. They take the raw setting value and
+// return the new JSON string, leaving entries the UI does not show untouched.
+
+class LauncherSettings {
+  static _objectOrEmpty(raw) {
+    var parsed = LauncherResolver._parseJson(raw)
+    return LauncherResolver._isPlainObject(parsed) ? parsed : {}
+  }
+
+  static _stringify(obj) {
+    for (var key in obj)
+      if (Object.prototype.hasOwnProperty.call(obj, key)) return JSON.stringify(obj)
+    return ""
+  }
+
+  static _has(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key)
+  }
+
+  // [{ name, command }] in stored order.
+  static rows(raw) {
+    var launchers = LauncherResolver.parseLaunchers(raw)
+    var rows = []
+    for (var name in launchers) {
+      if (LauncherSettings._has(launchers, name))
+        rows.push({ name: name, command: launchers[name] })
+    }
+    return rows
+  }
+
+  // Blank and duplicate names are not saved (first wins). Non-string entries
+  // of the existing value are kept.
+  static serializeRows(existingRaw, rows) {
+    var existing = LauncherSettings._objectOrEmpty(existingRaw)
+    var result = {}
+    for (var key in existing) {
+      if (LauncherSettings._has(existing, key) && typeof existing[key] !== "string")
+        result[key] = existing[key]
+    }
+    var seen = {}
+    for (var i = 0; i < rows.length; i++) {
+      var name = String((rows[i] && rows[i].name) || "").trim()
+      if (name === "" || LauncherSettings._has(seen, name)) continue
+      seen[name] = true
+      result[name] = String((rows[i] && rows[i].command) || "").trim()
+    }
+    return LauncherSettings._stringify(result)
+  }
+
+  // First key matching the calendar the way the resolver does, or null.
+  static _calendarKey(mapping, calendar) {
+    var identity = String(calendar || "")
+      .trim()
+      .toLowerCase()
+    if (identity === "") return null
+    for (var key in mapping) {
+      if (LauncherSettings._has(mapping, key) && key.trim().toLowerCase() === identity) return key
+    }
+    return null
+  }
+
+  // The launcher part of a calendar mapping value: the string itself, or an
+  // object's "default".
+  static _defaultOf(value) {
+    if (typeof value === "string") return value.trim()
+    if (LauncherResolver._isPlainObject(value) && typeof value["default"] === "string")
+      return value["default"].trim()
+    return ""
+  }
+
+  // Case-insensitive own key of a provider object, or null.
+  static _providerKey(obj, provider) {
+    for (var key in obj) {
+      if (LauncherSettings._has(obj, key) && key.trim().toLowerCase() === provider) return key
+    }
+    return null
+  }
+
+  // Rebuilds the mapping with `update(value)` applied to the calendar's entry
+  // (undefined = no entry yet); a returned undefined/null drops the entry. Case
+  // variants of the calendar name collapse into the first one.
+  static _updateCalendar(raw, calendar, update) {
+    var name = String(calendar || "").trim()
+    if (name === "") return String(raw === null || raw === undefined ? "" : raw)
+    var mapping = LauncherSettings._objectOrEmpty(raw)
+    var identity = name.toLowerCase()
+    var result = {}
+    var found = false
+    for (var key in mapping) {
+      if (!LauncherSettings._has(mapping, key)) continue
+      if (key.trim().toLowerCase() !== identity) {
+        result[key] = mapping[key]
+      } else if (!found) {
+        found = true
+        var next = update(mapping[key])
+        if (next !== undefined && next !== null) result[key] = next
+      }
+    }
+    if (!found) {
+      var created = update(undefined)
+      if (created !== undefined && created !== null) result[name] = created
+    }
+    return LauncherSettings._stringify(result)
+  }
+
+  static calendarChoice(raw, calendar) {
+    var mapping = LauncherResolver.parseCalendarLaunchers(raw)
+    var key = LauncherSettings._calendarKey(mapping, calendar)
+    return key === null ? "" : LauncherSettings._defaultOf(mapping[key])
+  }
+
+  // An empty launcher means "Default" and removes the calendar's default;
+  // provider launchers of an object value are kept.
+  static serializeCalendarChoice(raw, calendar, launcher) {
+    var target = String(launcher || "").trim()
+    return LauncherSettings._updateCalendar(raw, calendar, function (value) {
+      if (!LauncherResolver._isPlainObject(value)) return target === "" ? null : target
+      var copy = {}
+      for (var k in value) if (LauncherSettings._has(value, k)) copy[k] = value[k]
+      if (target !== "") copy["default"] = target
+      else delete copy["default"]
+      return LauncherSettings._stringify(copy) === "" ? null : copy
+    })
+  }
+
+  // The calendar's Teams launcher, or "".
+  static teamsChoice(raw, calendar) {
+    var mapping = LauncherResolver.parseCalendarLaunchers(raw)
+    var key = LauncherSettings._calendarKey(mapping, calendar)
+    if (key === null || typeof mapping[key] === "string") return ""
+    return mapping[key].teams || ""
+  }
+
+  // A string value becomes { default, teams } when a Teams launcher is chosen
+  // and goes back to a string once cleared with only `default` left; other
+  // provider keys are kept. An empty launcher clears the Teams choice.
+  static serializeCalendarTeams(raw, calendar, launcher) {
+    var target = String(launcher || "").trim()
+    return LauncherSettings._updateCalendar(raw, calendar, function (value) {
+      var obj = {}
+      if (typeof value === "string") {
+        if (value.trim() !== "") obj["default"] = value
+      } else if (LauncherResolver._isPlainObject(value)) {
+        for (var k in value) if (LauncherSettings._has(value, k)) obj[k] = value[k]
+      } else if (target === "") {
+        return null
+      }
+      var teamsKey = LauncherSettings._providerKey(obj, "teams")
+      if (target !== "") {
+        obj[teamsKey === null ? "teams" : teamsKey] = target
+        return obj
+      }
+      if (teamsKey === null) return value === undefined ? null : value
+      delete obj[teamsKey]
+      var keys = Object.keys(obj)
+      if (keys.length === 0) return null
+      if (keys.length === 1 && keys[0] === "default" && typeof obj["default"] === "string")
+        return obj["default"]
+      return obj
+    })
+  }
+
+  // Picker choices: "" (Default), launcher names, and the current value if it
+  // names no known launcher so a dangling mapping stays visible.
+  static choiceOptions(launcherNames, current) {
+    var options = [""].concat(launcherNames)
+    var value = String(current || "")
+    if (value !== "" && options.indexOf(value) === -1) options.push(value)
+    return options
+  }
+}
+
+function parseLaunchers(raw) {
+  return LauncherResolver.parseLaunchers(raw)
+}
+function parseCalendarLaunchers(raw) {
+  return LauncherResolver.parseCalendarLaunchers(raw)
+}
+function parseLauncherRules(raw) {
+  return LauncherResolver.parseLauncherRules(raw)
+}
+function resolveLauncher(event, action, config) {
+  return LauncherResolver.resolve(event, action, config)
+}
+
+function launcherRows(raw) {
+  return LauncherSettings.rows(raw)
+}
+function serializeLaunchers(existingRaw, rows) {
+  return LauncherSettings.serializeRows(existingRaw, rows)
+}
+function calendarLauncherChoice(raw, calendar) {
+  return LauncherSettings.calendarChoice(raw, calendar)
+}
+function serializeCalendarLauncher(raw, calendar, launcher) {
+  return LauncherSettings.serializeCalendarChoice(raw, calendar, launcher)
+}
+function calendarTeamsChoice(raw, calendar) {
+  return LauncherSettings.teamsChoice(raw, calendar)
+}
+function serializeCalendarTeams(raw, calendar, launcher) {
+  return LauncherSettings.serializeCalendarTeams(raw, calendar, launcher)
+}
+function calendarLauncherOptions(launcherNames, current) {
+  return LauncherSettings.choiceOptions(launcherNames, current)
+}
 function eventCalendarUrl(event, base) {
   return DisplayFormatter.eventCalendarUrl(event, base)
 }
@@ -2427,6 +2828,9 @@ function headerStatus(
     configured,
     use12Hour
   )
+}
+function joinLabel(launcherName) {
+  return DisplayFormatter.joinLabel(launcherName)
 }
 function tooltipLine(configured, nextMeeting, now, options) {
   return DisplayFormatter.tooltipLine(configured, nextMeeting, now, options)
@@ -2492,6 +2896,8 @@ if (typeof module !== "undefined" && module.exports) {
     ScheduleAggregator: ScheduleAggregator,
     DisplayFormatter: DisplayFormatter,
     PanelNavigationModel: PanelNavigationModel,
+    LauncherResolver: LauncherResolver,
+    LauncherSettings: LauncherSettings,
 
     // Public API functions
     parseIcs: parseIcs,
@@ -2517,6 +2923,17 @@ if (typeof module !== "undefined" && module.exports) {
     computeScheduleState: computeScheduleState,
     findMeetUrl: findMeetUrl,
     meetLabel: meetLabel,
+    parseLaunchers: parseLaunchers,
+    parseCalendarLaunchers: parseCalendarLaunchers,
+    parseLauncherRules: parseLauncherRules,
+    resolveLauncher: resolveLauncher,
+    launcherRows: launcherRows,
+    serializeLaunchers: serializeLaunchers,
+    calendarLauncherChoice: calendarLauncherChoice,
+    serializeCalendarLauncher: serializeCalendarLauncher,
+    calendarTeamsChoice: calendarTeamsChoice,
+    serializeCalendarTeams: serializeCalendarTeams,
+    calendarLauncherOptions: calendarLauncherOptions,
     eventCalendarUrl: eventCalendarUrl,
     formatLabel: formatLabel,
     relativeStatus: relativeStatus,
@@ -2524,6 +2941,7 @@ if (typeof module !== "undefined" && module.exports) {
     meetingTimeLabel: meetingTimeLabel,
     barLabel: barLabel,
     headerStatus: headerStatus,
+    joinLabel: joinLabel,
     tooltipLine: tooltipLine,
     heroHeaderMeta: heroHeaderMeta,
     heroTimeStatus: heroTimeStatus,

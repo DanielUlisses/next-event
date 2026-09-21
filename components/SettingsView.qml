@@ -84,6 +84,73 @@ Item {
     serializeAndPersistFeeds()
   }
 
+  // Launcher rows are drafts: blank or duplicate names live here but are not
+  // persisted (see Model.serializeLaunchers).
+  property var launcherRowsList: []
+  readonly property var calendarNames: {
+    var legend = root.hostWidget ? (root.hostWidget.calendarLegend || []) : []
+    var names = []
+    for (var i = 0; i < legend.length; i++) if (legend[i] && legend[i].name) names.push(String(legend[i].name))
+    return names
+  }
+  readonly property var launcherNames: {
+    var names = []
+    for (var i = 0; i < root.launcherRowsList.length; i++) {
+      var name = String(root.launcherRowsList[i].name || "").trim()
+      if (name !== "" && names.indexOf(name) === -1) names.push(name)
+    }
+    return names
+  }
+
+  function rawSetting(key) {
+    return root.hostWidget ? root.hostWidget.setting(key, "") : ""
+  }
+
+  function loadLaunchersFromHost() {
+    root.launcherRowsList = Model.launcherRows(root.rawSetting("launchers"))
+  }
+
+  function persistLaunchers() {
+    root.settingChanged("launchers", Model.serializeLaunchers(root.rawSetting("launchers"), root.launcherRowsList))
+  }
+
+  function addLauncher() {
+    var copy = root.launcherRowsList.slice()
+    copy.push({ name: "", command: "" })
+    root.launcherRowsList = copy
+  }
+
+  function removeLauncher(idx) {
+    var copy = root.launcherRowsList.slice()
+    copy.splice(idx, 1)
+    root.launcherRowsList = copy
+    persistLaunchers()
+  }
+
+  function updateLauncher(idx, name, command) {
+    if (idx < 0 || idx >= root.launcherRowsList.length) return
+    var copy = root.launcherRowsList.slice()
+    copy[idx] = { name: name, command: command }
+    root.launcherRowsList = copy
+    persistLaunchers()
+  }
+
+  function setCalendarLauncher(calendar, launcher) {
+    root.settingChanged("calendarLaunchers", Model.serializeCalendarLauncher(root.rawSetting("calendarLaunchers"), calendar, launcher))
+  }
+
+  function setCalendarTeamsLauncher(calendar, launcher) {
+    root.settingChanged("calendarLaunchers", Model.serializeCalendarTeams(root.rawSetting("calendarLaunchers"), calendar, launcher))
+  }
+
+  function launchersHaveFocus() {
+    for (var i = 0; i < launchersRepeater.count; i++) {
+      var item = launchersRepeater.itemAt(i)
+      if (item && item.isEditing) return true
+    }
+    return false
+  }
+
   function feedsHaveFocus() {
     for (var i = 0; i < feedsRepeater.count; i++) {
       var item = feedsRepeater.itemAt(i)
@@ -92,9 +159,9 @@ Item {
     return false
   }
 
-  onHostWidgetChanged: loadFeedsFromHost()
-  onVisibleChanged: if (visible) loadFeedsFromHost()
-  Component.onCompleted: loadFeedsFromHost()
+  onHostWidgetChanged: { loadFeedsFromHost(); loadLaunchersFromHost() }
+  onVisibleChanged: if (visible) { loadFeedsFromHost(); loadLaunchersFromHost() }
+  Component.onCompleted: { loadFeedsFromHost(); loadLaunchersFromHost() }
 
   readonly property bool isEditing: daysAheadStepper.isEditing
     || refreshMinStepper.isEditing
@@ -108,6 +175,7 @@ Item {
     || keyJoinInput.isEditing
     || keyCalendarInput.isEditing
     || feedsHaveFocus()
+    || launchersHaveFocus()
 
   width: parent ? parent.width : 0
   height: visible ? settingsColumn.implicitHeight : 0
@@ -429,7 +497,133 @@ Item {
     }
 
     // =========================================================================
-    // 5. Panel Shortcuts
+    // 5. Launchers
+    // =========================================================================
+    Column {
+      width: parent.width
+      spacing: Style.space(8)
+
+      PanelSectionHeader {
+        text: "LAUNCHERS"
+        foreground: root.contentForeground
+        fontFamily: root.contentFontFamily
+      }
+
+      Item {
+        width: parent.width
+        height: Math.max(launcherSubHeader.height, addLauncherBtn.height)
+
+        Text {
+          id: launcherSubHeader
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: "NAMED LAUNCHERS"
+          color: Qt.darker(root.contentForeground, Tokens.dimMuted)
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          font.letterSpacing: Tokens.sectionLetterSpacing
+          font.bold: true
+        }
+
+        Button {
+          id: addLauncherBtn
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          iconText: "+"
+          text: "Add Launcher"
+          bordered: true
+          foreground: root.contentForeground
+          accent: Color.accent
+          fontFamily: root.contentFontFamily
+          fontSize: Style.font.caption
+          horizontalPadding: Style.space(8)
+          verticalPadding: Style.space(4)
+          onClicked: root.addLauncher()
+        }
+      }
+
+      Text {
+        width: parent.width
+        textFormat: Text.PlainText
+        text: root.launcherRowsList.length === 0
+          ? "No launchers yet. A launcher is a name plus a command prefix (e.g. a browser profile); the URL is appended when opening links. Rows with a blank or duplicate name are not saved."
+          : "Rows with a blank or duplicate name are not saved. Routing rules (launcherRules) are JSON-only; see the README."
+        color: Qt.darker(root.contentForeground, Tokens.dimMeta)
+        font.family: root.contentFontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
+
+      Repeater {
+        id: launchersRepeater
+        model: root.launcherRowsList
+
+        LauncherCard {
+          required property var modelData
+          required property int index
+
+          width: settingsColumn.width
+          launcherIndex: index
+          launcherName: modelData.name || ""
+          launcherCommand: modelData.command || ""
+          contentForeground: root.contentForeground
+          contentFontFamily: root.contentFontFamily
+
+          onNameModified: function(val) { root.updateLauncher(index, val, modelData.command || "") }
+          onCommandModified: function(val) { root.updateLauncher(index, modelData.name || "", val) }
+          onRemoveRequested: root.removeLauncher(index)
+        }
+      }
+
+      Text {
+        visible: root.calendarNames.length > 0
+        textFormat: Text.PlainText
+        text: "LAUNCHER PER CALENDAR"
+        color: Qt.darker(root.contentForeground, Tokens.dimMuted)
+        font.family: root.contentFontFamily
+        font.pixelSize: Style.font.caption
+        font.letterSpacing: Tokens.sectionLetterSpacing
+        font.bold: true
+      }
+
+      Text {
+        visible: root.calendarNames.length === 0
+        width: parent.width
+        textFormat: Text.PlainText
+        text: "Calendars appear here once a feed or calendar has loaded."
+        color: Qt.darker(root.contentForeground, Tokens.dimMeta)
+        font.family: root.contentFontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
+
+      Repeater {
+        model: root.calendarNames
+
+        CalendarLauncherPicker {
+          required property string modelData
+
+          width: settingsColumn.width
+          calendarName: modelData
+          currentLauncher: Model.calendarLauncherChoice(root.rawSetting("calendarLaunchers"), modelData)
+          currentTeamsLauncher: Model.calendarTeamsChoice(root.rawSetting("calendarLaunchers"), modelData)
+          launcherNames: root.launcherNames
+          contentForeground: root.contentForeground
+          contentFontFamily: root.contentFontFamily
+          onLauncherSelected: function(name) { root.setCalendarLauncher(modelData, name) }
+          onTeamsLauncherSelected: function(name) { root.setCalendarTeamsLauncher(modelData, name) }
+        }
+      }
+    }
+
+    PanelSeparator {
+      foreground: root.contentForeground
+      strength: Tokens.separatorGroup
+    }
+
+    // =========================================================================
+    // 6. Panel Shortcuts
     // =========================================================================
     Column {
       width: parent.width
