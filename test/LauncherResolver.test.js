@@ -289,6 +289,19 @@ describe("resolveLauncher", () => {
       assert.match(warn.mock.calls[0].arguments[0], /match.*provider/)
     })
 
+    it("resolve reports an invalid rule in warnings instead of logging", t => {
+      const warn = t.mock.method(console, "warn", () => {})
+      const r = Model.resolveLauncher(
+        withMeet(ics("1:1", "Work"), TEAMS_URL),
+        "join",
+        rulesOf([{ calendar: "Work", launcher: "teams" }])
+      )
+      assert.equal(r.source, "calendar")
+      assert.equal(warn.mock.callCount(), 0)
+      assert.equal(r.warnings.length, 1)
+      assert.match(r.warnings[0], /match.*provider/)
+    })
+
     it("provider rules do not affect open-in-calendar", () => {
       const r = Model.resolveLauncher(
         withMeet(ics("1:1", "Work"), TEAMS_URL),

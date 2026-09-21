@@ -2348,8 +2348,10 @@ class LauncherResolver {
   }
 
   // Ordered [{ match, provider, calendar, launcher }]; rules missing a
-  // launcher, or with neither a match nor a provider, are dropped.
-  static parseLauncherRules(raw) {
+  // launcher, or with neither a match nor a provider, are dropped. Warnings go
+  // to `warnings` when given (the resolver runs inside reactive bindings and
+  // must not log on every re-evaluation), otherwise to console.warn.
+  static parseLauncherRules(raw, warnings) {
     var parsed = LauncherResolver._parseJson(raw)
     var rules = []
     if (!Array.isArray(parsed)) return rules
@@ -2361,11 +2363,12 @@ class LauncherResolver {
       var provider = typeof rule.provider === "string" ? rule.provider.trim() : ""
       if (launcher === "") continue
       if (match === "" && provider === "") {
-        console.warn(
+        var message =
           'next-event: launcherRules entry for launcher "' +
-            launcher +
-            '" needs a "match" or a "provider" and was ignored'
-        )
+          launcher +
+          '" needs a "match" or a "provider" and was ignored'
+        if (Array.isArray(warnings)) warnings.push(message)
+        else console.warn(message)
         continue
       }
       rules.push({
@@ -2424,7 +2427,7 @@ class LauncherResolver {
       var title = String((event && event.title) || "").toLowerCase()
       var meetUrl = event && event.meetUrl
       var provider = meetUrl ? MeetingLinkDetector.meetLabel(meetUrl).toLowerCase() : ""
-      var rules = LauncherResolver.parseLauncherRules(cfg.launcherRules)
+      var rules = LauncherResolver.parseLauncherRules(cfg.launcherRules, warnings)
       for (var i = 0; i < rules.length; i++) {
         var rule = rules[i]
         if (rule.calendar !== "" && rule.calendar.toLowerCase() !== identity) continue
