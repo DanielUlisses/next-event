@@ -285,6 +285,7 @@ Panel {
             inMeeting: root.inMeeting
             useCalendarColors: root.useCalendarColors
             use12Hour: root.hostWidget ? root.hostWidget.use12Hour : false
+            launcherName: root.hostWidget ? root.hostWidget.launcherNameFor(root.next) : ""
             contentForeground: root.contentForeground
             contentFontFamily: root.contentFontFamily
             cursorOnJoin: root.cursorOn("join")

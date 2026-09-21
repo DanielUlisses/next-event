@@ -2184,12 +2184,18 @@ class DisplayFormatter {
     return ""
   }
 
+  // Join button text; launcherName comes from LauncherResolver ("" = fallback).
+  static joinLabel(launcherName) {
+    return launcherName ? LABEL_JOIN_MEETING + " · " + launcherName : LABEL_JOIN_MEETING
+  }
+
   static tooltipLine(configured, nextMeeting, now, options) {
     options = options || {}
     var lastFetchFailed = options.lastFetchFailed === true
     var offlineFeedCount = options.offlineFeedCount || 0
     var showCalendarLabel = options.showCalendarLabel !== false
     var use12Hour = options.use12Hour === true
+    var launcherName = options.launcherName || ""
 
     if (!configured) return "NextEvent — No calendar configured\nClick to set up"
     if (!nextMeeting) {
@@ -2211,6 +2217,7 @@ class DisplayFormatter {
     var status = DisplayFormatter.relativeStatus(nextMeeting, now, use12Hour)
     var line = title + " · " + range + (status ? " (" + status + ")" : "")
     if (showCalendarLabel && nextMeeting.feedLabel) line = nextMeeting.feedLabel + " · " + line
+    if (launcherName) line += " · via " + launcherName
     if (lastFetchFailed) line += " · " + STATUS_OFFLINE
     else if (offlineFeedCount > 0)
       line +=
@@ -2554,6 +2561,9 @@ function headerStatus(
     use12Hour
   )
 }
+function joinLabel(launcherName) {
+  return DisplayFormatter.joinLabel(launcherName)
+}
 function tooltipLine(configured, nextMeeting, now, options) {
   return DisplayFormatter.tooltipLine(configured, nextMeeting, now, options)
 }
@@ -2653,6 +2663,7 @@ if (typeof module !== "undefined" && module.exports) {
     meetingTimeLabel: meetingTimeLabel,
     barLabel: barLabel,
     headerStatus: headerStatus,
+    joinLabel: joinLabel,
     tooltipLine: tooltipLine,
     heroHeaderMeta: heroHeaderMeta,
     heroTimeStatus: heroTimeStatus,

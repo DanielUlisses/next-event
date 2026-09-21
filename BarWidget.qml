@@ -95,6 +95,17 @@ BarWidget {
     && root.now.getTime() >= nextMeeting.start.getTime()
     && root.now.getTime() < nextMeeting.end.getTime()
 
+  // Named launcher the join action would use for `event` ("" = fallback).
+  function launcherNameFor(event) {
+    if (!event || !event.meetUrl) return ""
+    return Model.resolveLauncher(event, "join", {
+      launchers: root.launchers,
+      calendarLaunchers: root.calendarLaunchers,
+      launcherRules: root.launcherRules,
+      browserCommand: root.browserCommand
+    }).launcherName
+  }
+
   // ---- actions
   function openMeetingUrl(url, event, action) {
     if (!url) return
@@ -439,6 +450,7 @@ BarWidget {
     lastFetchFailed: root.lastFetchFailed,
     offlineFeedCount: root.offlineFeedCount,
     showCalendarLabel: root.showCalendarLabel,
-    use12Hour: root.use12Hour
+    use12Hour: root.use12Hour,
+    launcherName: root.launcherNameFor(root.nextMeeting)
   })
 }
