@@ -167,6 +167,7 @@ Item {
     || refreshMinStepper.isEditing
     || maxTitleStepper.isEditing
     || maxFeedSizeStepper.isEditing
+    || notifyMinutesStepper.isEditing
     || eventsJsonField.isEditing
     || calendarUrlField.isEditing
     || browserCmdField.isEditing
@@ -383,6 +384,19 @@ Item {
         text: "DISPLAY OPTIONS"
         foreground: root.contentForeground
         fontFamily: root.contentFontFamily
+      }
+
+      SettingStepper {
+        id: notifyMinutesStepper
+        label: "Meeting reminder"
+        description: "Minutes before a meeting to show a notification (0 = off)"
+        from: 0
+        to: 120
+        stepSize: 1
+        value: root.hostWidget ? root.hostWidget.notifyMinutesBefore : Model.DEFAULT_NOTIFY_MINUTES_BEFORE
+        contentForeground: root.contentForeground
+        contentFontFamily: root.contentFontFamily
+        onModified: function(v) { root.settingChanged("notifyMinutesBefore", v) }
       }
 
       Toggle {

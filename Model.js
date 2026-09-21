@@ -16,6 +16,7 @@ var DAYS_PER_WEEK = 7
 var DEFAULT_REFRESH_MINUTES = 5
 var DEFAULT_LOOKAHEAD_DAYS = 3
 var DEFAULT_MAX_TITLE_LENGTH = 28
+var DEFAULT_NOTIFY_MINUTES_BEFORE = 10
 var MIN_MAX_TITLE_LENGTH = 8
 var MIN_TITLE_CHARS = 3
 var DEFAULT_MAX_FEED_SIZE_MIB = 10
@@ -164,6 +165,7 @@ var Constants = {
   DEFAULT_REFRESH_MINUTES: DEFAULT_REFRESH_MINUTES,
   DEFAULT_LOOKAHEAD_DAYS: DEFAULT_LOOKAHEAD_DAYS,
   DEFAULT_MAX_TITLE_LENGTH: DEFAULT_MAX_TITLE_LENGTH,
+  DEFAULT_NOTIFY_MINUTES_BEFORE: DEFAULT_NOTIFY_MINUTES_BEFORE,
   MIN_MAX_TITLE_LENGTH: MIN_MAX_TITLE_LENGTH,
   MIN_TITLE_CHARS: MIN_TITLE_CHARS,
   DEFAULT_MAX_FEED_SIZE_MIB: DEFAULT_MAX_FEED_SIZE_MIB,
@@ -2259,6 +2261,84 @@ class DisplayFormatter {
 }
 
 // ---------------------------------------------------------------------------
+// MeetingReminders: which events need a reminder notification, and its text
+// ---------------------------------------------------------------------------
+
+class MeetingReminders {
+  // Dedup identity of one occurrence; a rescheduled start yields a new key.
+  static key(event) {
+    return (event.uid || event.title || "") + "@" + event.start.getTime()
+  }
+
+  // Timed events with start - minutesBefore <= now < start that were not
+  // notified yet. `minutesBefore` <= 0 (or not a number) disables reminders.
+  static due(events, now, minutesBefore, notified, options) {
+    var minutes = parseInt(minutesBefore, 10)
+    if (!(minutes > 0)) return []
+    notified = notified || {}
+    var showOnlyWithVideoLink = !!options && options.showOnlyWithVideoLink === true
+    var nowMs = now.getTime()
+    var windowMs = minutes * MS_PER_MINUTE
+    var result = []
+    for (var i = 0; i < (events || []).length; i++) {
+      var event = events[i]
+      if (!event || !event.start || !event.end) continue
+      if (ScheduleAggregator.isEventAllDay(event)) continue
+      if (showOnlyWithVideoLink && !event.meetUrl) continue
+      var startMs = event.start.getTime()
+      if (nowMs < startMs - windowMs || nowMs >= startMs) continue
+      if (notified[MeetingReminders.key(event)]) continue
+      result.push(event)
+    }
+    return result
+  }
+
+  // Keep only entries whose start (the ms after the last "@") is not past.
+  static prune(notified, now) {
+    var result = {}
+    var nowMs = now.getTime()
+    for (var key in notified || {}) {
+      if (!Object.prototype.hasOwnProperty.call(notified, key)) continue
+      var startMs = parseInt(key.slice(key.lastIndexOf("@") + 1), 10)
+      if (isNaN(startMs) || startMs < nowMs) continue
+      result[key] = notified[key]
+    }
+    return result
+  }
+
+  // State file text -> map; missing, corrupt or non-object content is empty.
+  static parseNotified(raw) {
+    var text = String(raw || "").trim()
+    if (!text) return {}
+    try {
+      var parsed = JSON.parse(text)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed
+    } catch (_e) {
+      // corrupt state file: start over
+    }
+    return {}
+  }
+
+  static summary(event, now) {
+    var title = String(event.title || LABEL_UNTITLED)
+    var remainingMs = event.start.getTime() - now.getTime()
+    if (remainingMs < MS_PER_MINUTE) return title + " · now"
+    return title + " · in " + Math.ceil(remainingMs / MS_PER_MINUTE) + " min"
+  }
+
+  static body(event, options) {
+    options = options || {}
+    var parts = [
+      DisplayFormatter.timeRange(event.start, event.end, false, options.use12Hour === true)
+    ]
+    var calendar = event.feedLabel || event.calendarName || ""
+    if (options.showCalendarLabel !== false && calendar) parts.push(calendar)
+    if (options.launcherName) parts.push("via " + options.launcherName)
+    return parts.join(" · ")
+  }
+}
+
+// ---------------------------------------------------------------------------
 // PanelNavigationModel: keyboard navigation
 // ---------------------------------------------------------------------------
 
@@ -2835,6 +2915,24 @@ function joinLabel(launcherName) {
 function tooltipLine(configured, nextMeeting, now, options) {
   return DisplayFormatter.tooltipLine(configured, nextMeeting, now, options)
 }
+function dueReminders(events, now, minutesBefore, notified, options) {
+  return MeetingReminders.due(events, now, minutesBefore, notified, options)
+}
+function reminderKey(event) {
+  return MeetingReminders.key(event)
+}
+function reminderSummary(event, now) {
+  return MeetingReminders.summary(event, now)
+}
+function reminderBody(event, options) {
+  return MeetingReminders.body(event, options)
+}
+function pruneNotified(notified, now) {
+  return MeetingReminders.prune(notified, now)
+}
+function parseNotified(raw) {
+  return MeetingReminders.parseNotified(raw)
+}
 function heroHeaderMeta(next) {
   return DisplayFormatter.heroHeaderMeta(next)
 }
@@ -2895,6 +2993,7 @@ if (typeof module !== "undefined" && module.exports) {
     FeedConfigParser: FeedConfigParser,
     ScheduleAggregator: ScheduleAggregator,
     DisplayFormatter: DisplayFormatter,
+    MeetingReminders: MeetingReminders,
     PanelNavigationModel: PanelNavigationModel,
     LauncherResolver: LauncherResolver,
     LauncherSettings: LauncherSettings,
@@ -2942,6 +3041,12 @@ if (typeof module !== "undefined" && module.exports) {
     barLabel: barLabel,
     headerStatus: headerStatus,
     joinLabel: joinLabel,
+    dueReminders: dueReminders,
+    reminderKey: reminderKey,
+    reminderSummary: reminderSummary,
+    reminderBody: reminderBody,
+    pruneNotified: pruneNotified,
+    parseNotified: parseNotified,
     tooltipLine: tooltipLine,
     heroHeaderMeta: heroHeaderMeta,
     heroTimeStatus: heroTimeStatus,
