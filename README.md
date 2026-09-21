@@ -22,6 +22,7 @@ upcoming event from your calendar with live countdowns and lets you join video c
 - [Available Settings](#available-settings)
 - [Opening the Panel from the Keyboard](#opening-the-panel-from-the-keyboard)
   - [Panel Keyboard Shortcuts](#panel-keyboard-shortcuts)
+- [Meeting reminders](#meeting-reminders)
 - [Privacy](#privacy)
 - [Contributing](#contributing)
 - [License](#license)
@@ -169,6 +170,7 @@ Configure settings with `omarchy bar set tobiasz-p.next-event <key> <value>`:
 | `maxTitleLength`      | `28`    | Bar label truncation length                         |
 | `timeFormat`          | `24`    | Time display format: `24` (24-hour) or `12` (AM/PM) |
 | `maxFeedSizeMiB`      | `10`    | Maximum size of each downloaded calendar feed (MiB) |
+| `notifyMinutesBefore` | `10`    | Minutes before a meeting to show a reminder notification; `0` turns reminders off (see [Meeting reminders](#meeting-reminders)) |
 | `showOnlyWithVideoLink` | `false` | Only show meetings in the bar countdown that have a video link |
 | `showCalendarLabel`   | `true`  | Include calendar name in the bar widget tooltip      |
 | `useCalendarColors`   | `true`  | Tint event indicators and badges in the panel using calendar-specific colors |
@@ -243,6 +245,26 @@ video link) resolves: matching rule → calendar mapping → `browserCommand` �
 Invalid JSON is ignored. A rule or mapping that names an unknown launcher, or a launcher with
 an empty command, falls through to the next level and logs a warning naming the bad
 reference, so a click always opens something.
+
+## Meeting reminders
+
+A few minutes before a timed meeting starts (`notifyMinutesBefore`, default `10`), NextEvent
+shows a standard Omarchy notification with the title, time range, calendar and launcher. It is
+sent once per meeting, uses the same events as the bar (declined invites are skipped and, with
+`showOnlyWithVideoLink`, so are meetings without a video link), and never
+fires for all-day events or meetings that already started. A meeting rescheduled to a new time
+gets a fresh reminder.
+
+The notification stays on screen until you act on it:
+
+- **Click it** to join through the same launcher as the Join button (meetings without a video
+  link open in the calendar).
+- **Dismiss it** with Omarchy's `SUPER + ,` (last notification) or `SUPER + SHIFT + ,` (all);
+  nothing else happens.
+
+Reminders respect Do Not Disturb: while it is on they are silenced but still land in the
+notification history. Already-sent reminders are remembered in
+`~/.local/state/omarchy/next-event-notified.json` so a shell restart does not repeat them.
 
 ## Opening the panel from the keyboard
 

@@ -21,6 +21,7 @@ BarWidget {
   // (comma-separated), or a JSON array of strings / { url, label } objects.
   readonly property var icsFeeds: Model.splitIcsFeeds(setting("icsUrl", ""))
   readonly property string eventsJsonPath: String(setting("eventsJsonPath", (Quickshell.env("HOME") || "") + "/.local/state/omarchy/calendar-events.json") || "").trim()
+  readonly property string notifiedPath: (Quickshell.env("HOME") || "") + "/.local/state/omarchy/next-event-notified.json"
   readonly property string icsCachePath: (Quickshell.env("HOME") || "") + "/.local/state/omarchy/next-event-cache.json"
   readonly property string sourceMode: String(setting("sourceMode", icsFeeds.length > 0 ? Model.SOURCE_MODE_ICS : Model.SOURCE_MODE_JSON) || "").trim()
   readonly property int refreshMinutes: Math.max(1, parseInt(setting("refreshMinutes", Model.DEFAULT_REFRESH_MINUTES), 10) || Model.DEFAULT_REFRESH_MINUTES)
@@ -32,6 +33,11 @@ BarWidget {
   readonly property bool showOnlyWithVideoLink: Model.toBoolean(setting("showOnlyWithVideoLink", false), false)
   readonly property bool showCalendarLabel: Model.toBoolean(setting("showCalendarLabel", true), true)
   readonly property bool useCalendarColors: Model.toBoolean(setting("useCalendarColors", true), true)
+  // Minutes before a meeting to raise a reminder notification; 0 = off.
+  readonly property int notifyMinutesBefore: {
+    var minutes = parseInt(setting("notifyMinutesBefore", Model.DEFAULT_NOTIFY_MINUTES_BEFORE), 10)
+    return isNaN(minutes) ? Model.DEFAULT_NOTIFY_MINUTES_BEFORE : Math.max(0, minutes)
+  }
   readonly property bool colorOnBar: Model.toBoolean(setting("colorOnBar", false), false)
   readonly property string browserCommand: String(setting("browserCommand", "") || "").trim()
   // Per-calendar launcher routing (JSON strings; empty = browserCommand /
@@ -66,6 +72,10 @@ BarWidget {
     fetchCalendar()
   }
   property var rawEvents: []
+  // Reminder dedup state ("<uid or title>@<start ms>" -> true), persisted so a
+  // shell restart does not notify again. Reminders wait for the file to load.
+  property var notified: ({})
+  property bool notifiedLoaded: false
   property var meetings: []
   property var upcomingToday: []
   property var scheduleGroups: []
@@ -222,6 +232,7 @@ BarWidget {
     root.calendarLegend = state.calendarLegend || []
     if (lastUpdatedDate) root.lastUpdated = lastUpdatedDate
     root.meetingDataChanged()
+    root.checkReminders()
   }
 
   function finishFetch() {
@@ -281,6 +292,39 @@ BarWidget {
 
   function refresh() {
     fetchCalendar()
+  }
+
+  // ---- meeting reminders
+  function checkReminders() {
+    if (!root.notifiedLoaded || root.notifyMinutesBefore <= 0) return
+    // Cached events may be stale (cancelled/rescheduled since): wait for a live fetch.
+    if (root.sourceMode === Model.SOURCE_MODE_ICS && !root.icsLiveFetchSucceeded) return
+    // Fresh clock: root.now only ticks every 30 s.
+    var now = new Date()
+    var due = Model.dueReminders(root.rawEvents, now, root.notifyMinutesBefore, root.notified, {
+      showOnlyWithVideoLink: root.showOnlyWithVideoLink
+    })
+    if (due.length === 0) return
+    var state = Model.pruneNotified(root.notified, now)
+    for (var i = 0; i < due.length; i++) state[Model.reminderKey(due[i])] = true
+    root.notified = state
+    notifiedFile.setText(JSON.stringify(state))
+    for (var j = 0; j < due.length; j++) root.sendReminder(due[j], now)
+  }
+
+  // feed-derived text goes in as argv entries only; "--" keeps a title that
+  // starts with "-" from being read as an option.
+  function sendReminder(event, now) {
+    var summary = Model.reminderSummary(event, now)
+    var body = Model.reminderBody(event, {
+      use12Hour: root.use12Hour,
+      showCalendarLabel: root.showCalendarLabel,
+      launcherName: root.launcherNameFor(event)
+    })
+    reminderProcess.createObject(root, {
+      reminderEvent: event,
+      command: ["notify-send", "-a", "NextEvent", "-u", "critical", "--action=default=Join", "--wait", "--", summary, body]
+    })
   }
 
   function recalc() {
@@ -373,6 +417,44 @@ BarWidget {
     atomicWrites: true
     printErrors: false
     onLoaded: root.onIcsCacheLoaded(text())
+  }
+
+  FileView {
+    id: notifiedFile
+    path: root.notifiedPath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.notified = Model.parseNotified(text())
+      root.notifiedLoaded = true
+      root.checkReminders()
+    }
+    onLoadFailed: function(error) {
+      root.notified = ({})
+      root.notifiedLoaded = true
+      root.checkReminders()
+    }
+  }
+
+  // One notify-send per reminder, so concurrent reminders each keep their own
+  // event. It prints "default" on stdout when the popup is clicked and nothing
+  // when it is dismissed, so a dismissal does nothing else.
+  Component {
+    id: reminderProcess
+    Process {
+      id: reminder
+      property var reminderEvent: null
+      running: true
+      stdout: StdioCollector {
+        waitForEnd: true
+        onStreamFinished: {
+          if (text.trim() === "default") root.openEvent(reminder.reminderEvent)
+          // Destroy only after the output was handled; exit can precede it.
+          reminder.destroy()
+        }
+      }
+    }
   }
 
   Process {
