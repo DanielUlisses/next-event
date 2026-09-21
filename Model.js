@@ -2301,6 +2301,138 @@ class PanelNavigationModel {
   }
 }
 
+// --- Launcher routing ------------------------------------------------------
+// Chooses which command opens a meeting/calendar URL. Settings are JSON
+// strings (from `omarchy bar set`); anything invalid is ignored.
+
+class LauncherResolver {
+  static _parseJson(raw) {
+    if (raw !== null && typeof raw === "object") return raw
+    var text = String(raw === null || raw === undefined ? "" : raw).trim()
+    if (text === "") return null
+    try {
+      return JSON.parse(text)
+    } catch (_e) {
+      return null
+    }
+  }
+
+  static _isPlainObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+  }
+
+  // name -> command prefix. Non-string values are dropped; empty commands are
+  // kept so a reference to them can be reported at resolve time.
+  static parseLaunchers(raw) {
+    var parsed = LauncherResolver._parseJson(raw)
+    var result = {}
+    if (!LauncherResolver._isPlainObject(parsed)) return result
+    for (var name in parsed) {
+      if (Object.prototype.hasOwnProperty.call(parsed, name) && typeof parsed[name] === "string") {
+        result[name] = parsed[name]
+      }
+    }
+    return result
+  }
+
+  // calendar name -> launcher name.
+  static parseCalendarLaunchers(raw) {
+    return LauncherResolver.parseLaunchers(raw)
+  }
+
+  // Ordered [{ match, calendar, launcher }]; rules missing a match or a
+  // launcher are dropped.
+  static parseLauncherRules(raw) {
+    var parsed = LauncherResolver._parseJson(raw)
+    var rules = []
+    if (!Array.isArray(parsed)) return rules
+    for (var i = 0; i < parsed.length; i++) {
+      var rule = parsed[i]
+      if (!LauncherResolver._isPlainObject(rule)) continue
+      var match = typeof rule.match === "string" ? rule.match.trim() : ""
+      var launcher = typeof rule.launcher === "string" ? rule.launcher.trim() : ""
+      if (match === "" || launcher === "") continue
+      rules.push({
+        match: match,
+        calendar: typeof rule.calendar === "string" ? rule.calendar.trim() : "",
+        launcher: launcher
+      })
+    }
+    return rules
+  }
+
+  static calendarIdentity(event) {
+    return String((event && (event.feedLabel || event.calendarName)) || "")
+      .trim()
+      .toLowerCase()
+  }
+
+  static _launcherCommand(launchers, name) {
+    if (!Object.prototype.hasOwnProperty.call(launchers, name)) return null
+    var command = launchers[name].trim()
+    return command === "" ? "" : command
+  }
+
+  // Returns { command, launcherName, source, warnings }. action is "join"
+  // (rule -> calendar -> browserCommand -> xdg-open) or "calendar" (rules
+  // skipped).
+  static resolve(event, action, config) {
+    var cfg = config || {}
+    var launchers = LauncherResolver.parseLaunchers(cfg.launchers)
+    var warnings = []
+    var identity = LauncherResolver.calendarIdentity(event)
+
+    function tryLauncher(name, source, origin) {
+      var command = LauncherResolver._launcherCommand(launchers, name)
+      if (command === null) {
+        warnings.push("next-event: " + origin + ' references unknown launcher "' + name + '"')
+      } else if (command === "") {
+        warnings.push(
+          'next-event: launcher "' + name + '" (from ' + origin + ") has an empty command"
+        )
+      } else {
+        return { command: command, launcherName: name, source: source, warnings: warnings }
+      }
+      return null
+    }
+
+    if (action === "join") {
+      var title = String((event && event.title) || "").toLowerCase()
+      var rules = LauncherResolver.parseLauncherRules(cfg.launcherRules)
+      for (var i = 0; i < rules.length; i++) {
+        var rule = rules[i]
+        if (rule.calendar !== "" && rule.calendar.toLowerCase() !== identity) continue
+        if (title.indexOf(rule.match.toLowerCase()) === -1) continue
+        // First matching rule wins; if it is broken, fall to the next level.
+        var byRule = tryLauncher(rule.launcher, "rule", 'launcherRules match "' + rule.match + '"')
+        if (byRule) return byRule
+        break
+      }
+    }
+
+    if (identity !== "") {
+      var calendars = LauncherResolver.parseCalendarLaunchers(cfg.calendarLaunchers)
+      for (var calendar in calendars) {
+        if (!Object.prototype.hasOwnProperty.call(calendars, calendar)) continue
+        if (calendar.trim().toLowerCase() !== identity) continue
+        var byCalendar = tryLauncher(
+          calendars[calendar].trim(),
+          "calendar",
+          'calendarLaunchers "' + calendar + '"'
+        )
+        if (byCalendar) return byCalendar
+        break
+      }
+    }
+
+    var browser = String(cfg.browserCommand || "").trim()
+    if (browser !== "") {
+      return { command: browser, launcherName: "", source: "browserCommand", warnings: warnings }
+    }
+    return { command: "xdg-open", launcherName: "", source: "default", warnings: warnings }
+  }
+}
+
 // --- Public API Functions (exposed directly to QML) ------------------------
 
 function parseIcs(text, options) {
@@ -2350,6 +2482,19 @@ function findMeetUrl(text) {
 }
 function meetLabel(url) {
   return MeetingLinkDetector.meetLabel(url)
+}
+
+function parseLaunchers(raw) {
+  return LauncherResolver.parseLaunchers(raw)
+}
+function parseCalendarLaunchers(raw) {
+  return LauncherResolver.parseCalendarLaunchers(raw)
+}
+function parseLauncherRules(raw) {
+  return LauncherResolver.parseLauncherRules(raw)
+}
+function resolveLauncher(event, action, config) {
+  return LauncherResolver.resolve(event, action, config)
 }
 
 function eventCalendarUrl(event, base) {
@@ -2453,6 +2598,7 @@ if (typeof module !== "undefined" && module.exports) {
     ScheduleAggregator: ScheduleAggregator,
     DisplayFormatter: DisplayFormatter,
     PanelNavigationModel: PanelNavigationModel,
+    LauncherResolver: LauncherResolver,
 
     // Public API functions
     parseIcs: parseIcs,
@@ -2476,6 +2622,10 @@ if (typeof module !== "undefined" && module.exports) {
     computeScheduleState: computeScheduleState,
     findMeetUrl: findMeetUrl,
     meetLabel: meetLabel,
+    parseLaunchers: parseLaunchers,
+    parseCalendarLaunchers: parseCalendarLaunchers,
+    parseLauncherRules: parseLauncherRules,
+    resolveLauncher: resolveLauncher,
     eventCalendarUrl: eventCalendarUrl,
     formatLabel: formatLabel,
     relativeStatus: relativeStatus,

@@ -174,6 +174,9 @@ Configure settings with `omarchy bar set tobiasz-p.next-event <key> <value>`:
 | `useCalendarColors`   | `true`  | Tint event indicators and badges in the panel using calendar-specific colors |
 | `colorOnBar`          | `false` | Also tint the bar widget text using the next meeting's calendar color (requires `useCalendarColors` to be `true`) |
 | `browserCommand`      | `""`    | Command used to open the Meet URL (`xdg-open` by default) |
+| `launchers`           | `""`    | JSON object mapping launcher names to command prefixes, e.g. `{"work":"google-chrome-stable --profile-directory=\"Profile 2\""}` (see [Per-calendar launchers](#per-calendar-launchers)) |
+| `calendarLaunchers`   | `""`    | JSON object mapping a calendar name to a launcher name, e.g. `{"Work":"work"}` |
+| `launcherRules`       | `""`    | JSON array of ordered override rules `{"match","calendar"?,"launcher"}` for joining specific meetings |
 | `calendarUrlBase`     | `"https://calendar.google.com/calendar"` | Base URL for "Open in Calendar" (opens `/r` route; set e.g. `https://calendar.google.com/calendar/u/1` for multi-account) |
 | `keyRefresh`          | `r`     | Panel key that force-refreshes the feeds            |
 | `keySettings`         | `,`     | Panel key that toggles the in-panel settings view   |
@@ -182,6 +185,42 @@ Configure settings with `omarchy bar set tobiasz-p.next-event <key> <value>`:
 
 Keys must be a single letter, digit, or punctuation mark. Arrows and `j`/`k`/`h`/`l` are reserved
 for panel navigation and cannot be rebound.
+
+## Per-calendar launchers
+
+By default every link is opened with `browserCommand` (or `xdg-open`). To open each
+calendar's meetings in a different browser profile or app, define named launchers, map
+calendars to them, and optionally add rules for individual recurring meetings. All three
+settings are JSON and empty by default, which keeps the behaviour above unchanged.
+
+A launcher is a name and a command prefix; the URL is shell-quoted and appended, exactly as
+with `browserCommand`. A calendar is identified by its feed label (`label|url` in `icsUrl`)
+or, in JSON/OAuth mode, its calendar name; names are matched trimmed, case-insensitive and in
+full.
+
+```sh
+omarchy bar set tobiasz-p.next-event launchers '{"work":"google-chrome-stable --profile-directory=\"Profile 2\"","personal":"google-chrome-stable --profile-directory=\"Profile 3\"","teams":"teams-for-linux"}'
+omarchy bar set tobiasz-p.next-event calendarLaunchers '{"Work":"work","Personal":"personal"}'
+omarchy bar set tobiasz-p.next-event launcherRules '[{"match":"Daily Sync","calendar":"Work","launcher":"teams"}]'
+```
+
+`--profile-directory` takes the profile **folder** name (`Default`, `Profile 2`, …), not the
+display name shown in Chrome. Find the folders under `~/.config/google-chrome/`.
+
+Rules send a specific meeting somewhere else: `match` is a case-insensitive substring of the
+event title, the optional `calendar` restricts the rule to one calendar, and the first
+matching rule wins. In the example above, "Daily Sync" in the Work calendar opens in
+`teams-for-linux` while the other Work meetings open in Chrome profile 2. Teams join links
+(`https://teams.microsoft.com/l/meetup-join/…`) are passed to the launcher unchanged; only a
+single `teams-for-linux` instance is supported.
+
+Joining (Join button, join key, right-click on the bar, or a row click on an event with a
+video link) resolves: matching rule → calendar mapping → `browserCommand` → `xdg-open`.
+"Open in Calendar" skips the rules: calendar mapping → `browserCommand` → `xdg-open`.
+
+Invalid JSON is ignored. A rule or mapping that names an unknown launcher, or a launcher with
+an empty command, falls through to the next level and logs a warning naming the bad
+reference, so a click always opens something.
 
 ## Opening the panel from the keyboard
 

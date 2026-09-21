@@ -34,6 +34,11 @@ BarWidget {
   readonly property bool useCalendarColors: Model.toBoolean(setting("useCalendarColors", true), true)
   readonly property bool colorOnBar: Model.toBoolean(setting("colorOnBar", false), false)
   readonly property string browserCommand: String(setting("browserCommand", "") || "").trim()
+  // Per-calendar launcher routing (JSON strings; empty = browserCommand /
+  // xdg-open as before). See README "Per-calendar launchers".
+  readonly property var launchers: setting("launchers", "")
+  readonly property var calendarLaunchers: setting("calendarLaunchers", "")
+  readonly property var launcherRules: setting("launcherRules", "")
   // Base for "Open in Calendar". Defaults to the signed-in account; set to
   // e.g. "https://calendar.google.com/calendar/u/2" to open a specific
   // account (matches the u/N in your browser's calendar URL).
@@ -91,25 +96,30 @@ BarWidget {
     && root.now.getTime() < nextMeeting.end.getTime()
 
   // ---- actions
-  function openMeetingUrl(url) {
+  function openMeetingUrl(url, event, action) {
     if (!url) return
-    var quote = Util.shellQuote(url)
-    if (browserCommand !== "") bar.run(browserCommand + " " + quote)
-    else bar.run("xdg-open " + quote)
+    var resolved = Model.resolveLauncher(event, action, {
+      launchers: root.launchers,
+      calendarLaunchers: root.calendarLaunchers,
+      launcherRules: root.launcherRules,
+      browserCommand: root.browserCommand
+    })
+    for (var i = 0; i < resolved.warnings.length; i++) console.warn(resolved.warnings[i])
+    bar.run(resolved.command + " " + Util.shellQuote(url))
   }
 
   function joinMeeting(event) {
-    if (event && event.meetUrl) openMeetingUrl(event.meetUrl)
+    if (event && event.meetUrl) openMeetingUrl(event.meetUrl, event, "join")
   }
 
   function openCalendar(event) {
     var url = Model.eventCalendarUrl(event, root.calendarUrlBase)
-    if (url) openMeetingUrl(url)
+    if (url) openMeetingUrl(url, event, "calendar")
   }
 
   function openEvent(event) {
     if (!event) return
-    if (event.meetUrl) openMeetingUrl(event.meetUrl)
+    if (event.meetUrl) joinMeeting(event)
     else openCalendar(event)
   }
 
