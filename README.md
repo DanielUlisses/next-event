@@ -231,6 +231,11 @@ omarchy bar set tobiasz-p.next-event launcherRules '[{"provider":"teams","launch
 `provider`, otherwise it is ignored with a warning. An event without a video link never matches
 a provider rule. Provider rules only affect joining.
 
+The in-panel settings view (`,` key) has a **Launchers** section that edits `launchers` (name +
+command rows; rows with a blank or duplicate name are not saved) and `calendarLaunchers` (one
+row per calendar: *Default* or a launcher). It preserves whatever else is in those JSON values.
+`launcherRules` stays JSON-only and is never touched by the UI.
+
 Joining (Join button, join key, right-click on the bar, or a row click on an event with a
 video link) resolves: matching rule → calendar mapping → `browserCommand` → `xdg-open`.
 "Open in Calendar" skips the rules: calendar mapping → `browserCommand` → `xdg-open`.

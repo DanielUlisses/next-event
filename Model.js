@@ -2511,6 +2511,106 @@ function meetLabel(url) {
   return MeetingLinkDetector.meetLabel(url)
 }
 
+// --- Launcher settings editing ---------------------------------------------
+// Pure helpers behind the settings UI. They take the raw setting value and
+// return the new JSON string, leaving entries the UI does not show untouched.
+
+class LauncherSettings {
+  static _objectOrEmpty(raw) {
+    var parsed = LauncherResolver._parseJson(raw)
+    return LauncherResolver._isPlainObject(parsed) ? parsed : {}
+  }
+
+  static _stringify(obj) {
+    for (var key in obj)
+      if (Object.prototype.hasOwnProperty.call(obj, key)) return JSON.stringify(obj)
+    return ""
+  }
+
+  static _has(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key)
+  }
+
+  // [{ name, command }] in stored order.
+  static rows(raw) {
+    var launchers = LauncherResolver.parseLaunchers(raw)
+    var rows = []
+    for (var name in launchers) {
+      if (LauncherSettings._has(launchers, name))
+        rows.push({ name: name, command: launchers[name] })
+    }
+    return rows
+  }
+
+  // Blank and duplicate names are not saved (first wins). Non-string entries
+  // of the existing value are kept.
+  static serializeRows(existingRaw, rows) {
+    var existing = LauncherSettings._objectOrEmpty(existingRaw)
+    var result = {}
+    for (var key in existing) {
+      if (LauncherSettings._has(existing, key) && typeof existing[key] !== "string")
+        result[key] = existing[key]
+    }
+    var seen = {}
+    for (var i = 0; i < rows.length; i++) {
+      var name = String((rows[i] && rows[i].name) || "").trim()
+      if (name === "" || LauncherSettings._has(seen, name)) continue
+      seen[name] = true
+      result[name] = String((rows[i] && rows[i].command) || "").trim()
+    }
+    return LauncherSettings._stringify(result)
+  }
+
+  // First key matching the calendar the way the resolver does, or null.
+  static _calendarKey(mapping, calendar) {
+    var identity = String(calendar || "")
+      .trim()
+      .toLowerCase()
+    if (identity === "") return null
+    for (var key in mapping) {
+      if (LauncherSettings._has(mapping, key) && key.trim().toLowerCase() === identity) return key
+    }
+    return null
+  }
+
+  static calendarChoice(raw, calendar) {
+    var mapping = LauncherResolver.parseCalendarLaunchers(raw)
+    var key = LauncherSettings._calendarKey(mapping, calendar)
+    return key === null ? "" : mapping[key].trim()
+  }
+
+  // An empty launcher means "Default" and removes the mapping.
+  static serializeCalendarChoice(raw, calendar, launcher) {
+    var name = String(calendar || "").trim()
+    if (name === "") return String(raw === null || raw === undefined ? "" : raw)
+    var mapping = LauncherSettings._objectOrEmpty(raw)
+    var identity = name.toLowerCase()
+    var target = String(launcher || "").trim()
+    var result = {}
+    var written = false
+    for (var key in mapping) {
+      if (!LauncherSettings._has(mapping, key)) continue
+      if (key.trim().toLowerCase() !== identity) {
+        result[key] = mapping[key]
+      } else if (target !== "" && !written) {
+        result[key] = target
+        written = true
+      }
+    }
+    if (target !== "" && !written) result[name] = target
+    return LauncherSettings._stringify(result)
+  }
+
+  // Picker choices: "" (Default), launcher names, and the current value if it
+  // names no known launcher so a dangling mapping stays visible.
+  static choiceOptions(launcherNames, current) {
+    var options = [""].concat(launcherNames)
+    var value = String(current || "")
+    if (value !== "" && options.indexOf(value) === -1) options.push(value)
+    return options
+  }
+}
+
 function parseLaunchers(raw) {
   return LauncherResolver.parseLaunchers(raw)
 }
@@ -2524,6 +2624,21 @@ function resolveLauncher(event, action, config) {
   return LauncherResolver.resolve(event, action, config)
 }
 
+function launcherRows(raw) {
+  return LauncherSettings.rows(raw)
+}
+function serializeLaunchers(existingRaw, rows) {
+  return LauncherSettings.serializeRows(existingRaw, rows)
+}
+function calendarLauncherChoice(raw, calendar) {
+  return LauncherSettings.calendarChoice(raw, calendar)
+}
+function serializeCalendarLauncher(raw, calendar, launcher) {
+  return LauncherSettings.serializeCalendarChoice(raw, calendar, launcher)
+}
+function calendarLauncherOptions(launcherNames, current) {
+  return LauncherSettings.choiceOptions(launcherNames, current)
+}
 function eventCalendarUrl(event, base) {
   return DisplayFormatter.eventCalendarUrl(event, base)
 }
@@ -2629,6 +2744,7 @@ if (typeof module !== "undefined" && module.exports) {
     DisplayFormatter: DisplayFormatter,
     PanelNavigationModel: PanelNavigationModel,
     LauncherResolver: LauncherResolver,
+    LauncherSettings: LauncherSettings,
 
     // Public API functions
     parseIcs: parseIcs,
@@ -2656,6 +2772,11 @@ if (typeof module !== "undefined" && module.exports) {
     parseCalendarLaunchers: parseCalendarLaunchers,
     parseLauncherRules: parseLauncherRules,
     resolveLauncher: resolveLauncher,
+    launcherRows: launcherRows,
+    serializeLaunchers: serializeLaunchers,
+    calendarLauncherChoice: calendarLauncherChoice,
+    serializeCalendarLauncher: serializeCalendarLauncher,
+    calendarLauncherOptions: calendarLauncherOptions,
     eventCalendarUrl: eventCalendarUrl,
     formatLabel: formatLabel,
     relativeStatus: relativeStatus,
