@@ -2280,6 +2280,10 @@ class MeetingReminders {
     var nowMs = now.getTime()
     var windowMs = minutes * MS_PER_MINUTE
     var result = []
+    // The same occurrence can reach here more than once: feeds overlap, and
+    // the JSON source is not deduped. Collapse by key so one occurrence is
+    // one notification even within a single sweep.
+    var seen = {}
     for (var i = 0; i < (events || []).length; i++) {
       var event = events[i]
       if (!event || !event.start || !event.end) continue
@@ -2287,10 +2291,24 @@ class MeetingReminders {
       if (showOnlyWithVideoLink && !event.meetUrl) continue
       var startMs = event.start.getTime()
       if (nowMs < startMs - windowMs || nowMs >= startMs) continue
-      if (notified[MeetingReminders.key(event)]) continue
+      var key = MeetingReminders.key(event)
+      if (notified[key] || seen[key]) continue
+      seen[key] = true
       result.push(event)
     }
     return result
+  }
+
+  // A bar surface is built per monitor, so this widget is live once per
+  // screen and every copy sweeps the same events. Elect the first live copy
+  // to own the notification; the rest stay silent. An unknown peer list (no
+  // host registry) means a single instance, which notifies.
+  static isPrimaryNotifier(instances, self) {
+    var list = instances || []
+    for (var i = 0; i < list.length; i++) {
+      if (list[i]) return list[i] === self
+    }
+    return true
   }
 
   // Keep only entries whose start (the ms after the last "@") is not past.
@@ -2930,6 +2948,9 @@ function reminderSummary(event, now) {
 function reminderBody(event, options) {
   return MeetingReminders.body(event, options)
 }
+function isPrimaryNotifier(instances, self) {
+  return MeetingReminders.isPrimaryNotifier(instances, self)
+}
 function pruneNotified(notified, now) {
   return MeetingReminders.prune(notified, now)
 }
@@ -3049,6 +3070,7 @@ if (typeof module !== "undefined" && module.exports) {
     reminderKey: reminderKey,
     reminderSummary: reminderSummary,
     reminderBody: reminderBody,
+    isPrimaryNotifier: isPrimaryNotifier,
     pruneNotified: pruneNotified,
     parseNotified: parseNotified,
     tooltipLine: tooltipLine,
