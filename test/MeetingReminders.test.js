@@ -9,7 +9,8 @@ const {
   reminderSummary,
   reminderBody,
   pruneNotified,
-  parseNotified
+  parseNotified,
+  isPrimaryNotifier
 } = require("../Model.js")
 
 const MIN = 60000
@@ -157,6 +158,41 @@ describe("reminderSummary()", () => {
   })
   it("falls back to the untitled label", () => {
     assert.equal(reminderSummary(ev({ title: "" }), at(5)), "(Untitled) · in 5 min")
+  })
+})
+
+describe("dueReminders() deduplication", () => {
+  it("returns one entry when the same occurrence appears twice", () => {
+    assert.equal(dueReminders([ev(), ev()], at(5), 10, {}).length, 1)
+  })
+  it("keeps distinct occurrences of the same series apart", () => {
+    const later = ev({ start: new Date(start.getTime() + 5 * MIN), end: end })
+    assert.equal(dueReminders([ev(), later], at(5), 10, {}).length, 2)
+  })
+  it("deduplicates untitled events without a uid by start", () => {
+    const anon = { uid: null, title: "" }
+    assert.equal(dueReminders([ev(anon), ev(anon)], at(5), 10, {}).length, 1)
+  })
+})
+
+describe("isPrimaryNotifier()", () => {
+  const a = { id: "a" }
+  const b = { id: "b" }
+
+  it("elects the first live instance", () => {
+    assert.equal(isPrimaryNotifier([a, b], a), true)
+    assert.equal(isPrimaryNotifier([a, b], b), false)
+  })
+  it("treats an unknown peer list as a single instance", () => {
+    assert.equal(isPrimaryNotifier(null, a), true)
+    assert.equal(isPrimaryNotifier([], a), true)
+  })
+  it("skips destroyed instances when electing", () => {
+    assert.equal(isPrimaryNotifier([null, b], b), true)
+    assert.equal(isPrimaryNotifier([null, b], a), false)
+  })
+  it("promotes the survivor once the elected instance is gone", () => {
+    assert.equal(isPrimaryNotifier([b], b), true)
   })
 })
 

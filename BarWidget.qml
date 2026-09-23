@@ -295,8 +295,18 @@ BarWidget {
   }
 
   // ---- meeting reminders
+
+  // The bar is built once per monitor, so every screen holds a live copy of
+  // this widget running the same sweep. Only the elected copy notifies,
+  // otherwise one meeting raises one notification per monitor.
+  function isReminderNotifier() {
+    if (!root.bar || typeof root.bar.moduleWidgets !== "function") return true
+    return Model.isPrimaryNotifier(root.bar.moduleWidgets(root.moduleName), root)
+  }
+
   function checkReminders() {
     if (!root.notifiedLoaded || root.notifyMinutesBefore <= 0) return
+    if (!root.isReminderNotifier()) return
     // Cached events may be stale (cancelled/rescheduled since): wait for a live fetch.
     if (root.sourceMode === Model.SOURCE_MODE_ICS && !root.icsLiveFetchSucceeded) return
     // Fresh clock: root.now only ticks every 30 s.
@@ -422,7 +432,10 @@ BarWidget {
   FileView {
     id: notifiedFile
     path: root.notifiedPath
-    watchChanges: false
+    // Watched, so the copies that lost the election still track what was
+    // sent: if the elected copy goes away with its monitor, its successor
+    // starts from current state instead of re-notifying.
+    watchChanges: true
     atomicWrites: true
     printErrors: false
     onLoaded: {
@@ -431,6 +444,9 @@ BarWidget {
       root.checkReminders()
     }
     onLoadFailed: function(error) {
+      // Only the first failure means "no state yet". A later one is the gap
+      // in an atomic replace; keeping the map avoids notifying twice.
+      if (root.notifiedLoaded) return
       root.notified = ({})
       root.notifiedLoaded = true
       root.checkReminders()
